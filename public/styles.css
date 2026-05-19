@@ -666,7 +666,7 @@ input[type="range"] {
   display: grid;
   grid-template-columns: minmax(180px, 280px) 1fr;
   gap: 18px;
-  padding: 22px;
+  padding: 22px 22px 42px;
 }
 
 .detail-art {
@@ -680,18 +680,14 @@ input[type="range"] {
   cursor: pointer;
 }
 
-.detail-info {
-  position: relative;
-  padding-bottom: 34px;
-}
-
 .detail-info h2 {
   margin: 0 34px 8px 0;
   font-size: 24px;
 }
 
-.detail-info .id-chip-bottom {
+.detail-panel .id-chip-bottom {
   right: 8px;
+  bottom: 8px;
 }
 
 .detail-info dl {

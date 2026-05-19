@@ -313,6 +313,10 @@ function personFromSelectionKey(key) {
   return split === -1 ? { type: "", name: "" } : { type: key.slice(0, split), name: key.slice(split + 1) };
 }
 
+function uniqueValues(values) {
+  return [...new Set(values)];
+}
+
 function checkedForPerson(type, name) {
   return state.selectedPersonKeys.includes(personSelectionKey(type, name));
 }
@@ -335,7 +339,7 @@ function peopleMovieKeysInViewOrder(type) {
   const people = type === "studio"
     ? sortedPeople(peopleWithVisibleImages(state.library.studios, "studio"))
     : sortedPeople(peopleWithVisibleImages(state.library.actresses, "actress"));
-  return unique(people.flatMap((person) => personMovieKeysInReleaseOrder(type, person.name)));
+  return uniqueValues(people.flatMap((person) => personMovieKeysInReleaseOrder(type, person.name)));
 }
 
 function selectedPlaylistMovieKeys() {
@@ -363,7 +367,7 @@ function selectedPersonMovieKeysInPlaybackOrder() {
     const { type, name } = personFromSelectionKey(personKey);
     keys.push(...personMovieKeysInReleaseOrder(type, name));
   }
-  return unique(keys);
+  return uniqueValues(keys);
 }
 
 function currentPlaybackMovieKeys() {
@@ -372,7 +376,7 @@ function currentPlaybackMovieKeys() {
   for (const key of state.selectedMovieKeys) {
     if (!checkedMovies.includes(key)) checkedMovies.push(key);
   }
-  return unique([...checkedMovies, ...selectedPersonMovieKeysInPlaybackOrder()]);
+  return uniqueValues([...checkedMovies, ...selectedPersonMovieKeysInPlaybackOrder()]);
 }
 
 function peopleWithVisibleImages(items, type) {
