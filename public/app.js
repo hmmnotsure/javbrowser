@@ -63,6 +63,7 @@ const lightboxCounterMinus = document.querySelector("#lightboxCounterMinus");
 const lightboxCounterValue = document.querySelector("#lightboxCounterValue");
 const lightboxCounterPlus = document.querySelector("#lightboxCounterPlus");
 const toolbar = document.querySelector("#toolbar");
+const optionsMenu = document.querySelector("#optionsMenu");
 const toast = document.querySelector("#toast");
 const themeSelect = document.querySelector("#themeSelect");
 const backBtn = document.querySelector("#backBtn");
@@ -334,7 +335,7 @@ function peopleMovieKeysInViewOrder(type) {
   const people = type === "studio"
     ? sortedPeople(peopleWithVisibleImages(state.library.studios, "studio"))
     : sortedPeople(peopleWithVisibleImages(state.library.actresses, "actress"));
-  return people.flatMap((person) => personMovieKeysInReleaseOrder(type, person.name));
+  return unique(people.flatMap((person) => personMovieKeysInReleaseOrder(type, person.name)));
 }
 
 function selectedPlaylistMovieKeys() {
@@ -344,6 +345,34 @@ function selectedPlaylistMovieKeys() {
     keys.push(...personMovieKeysInReleaseOrder(type, name));
   }
   return [...new Set(keys)];
+}
+
+function selectedPersonMovieKeysInPlaybackOrder() {
+  const keys = [];
+  const checked = new Set(state.selectedPersonKeys);
+  if (state.view === "actresses" || state.view === "studios") {
+    const type = state.view === "studios" ? "studio" : "actress";
+    const people = type === "studio"
+      ? sortedPeople(peopleWithVisibleImages(state.library.studios, "studio"))
+      : sortedPeople(peopleWithVisibleImages(state.library.actresses, "actress"));
+    for (const person of people) {
+      if (checked.has(personSelectionKey(type, person.name))) keys.push(...personMovieKeysInReleaseOrder(type, person.name));
+    }
+  }
+  for (const personKey of state.selectedPersonKeys) {
+    const { type, name } = personFromSelectionKey(personKey);
+    keys.push(...personMovieKeysInReleaseOrder(type, name));
+  }
+  return unique(keys);
+}
+
+function currentPlaybackMovieKeys() {
+  if (!state.selectedMovieKeys.size && !state.selectedPersonKeys.length) return state.currentRenderedMovieKeys;
+  const checkedMovies = state.currentRenderedMovieKeys.filter((key) => state.selectedMovieKeys.has(key));
+  for (const key of state.selectedMovieKeys) {
+    if (!checkedMovies.includes(key)) checkedMovies.push(key);
+  }
+  return unique([...checkedMovies, ...selectedPersonMovieKeysInPlaybackOrder()]);
 }
 
 function peopleWithVisibleImages(items, type) {
@@ -590,8 +619,8 @@ function renderPlaylist() {
 
 function renderActresses() {
   const actresses = sortedPeople(peopleWithVisibleImages(state.library.actresses, "actress"));
-  state.currentRenderedMovieKeys = [];
-  state.currentRenderedTitle = "";
+  state.currentRenderedMovieKeys = peopleMovieKeysInViewOrder("actress");
+  state.currentRenderedTitle = "Actresses";
   app.innerHTML = `
     <div class="section-head">
       <div>
@@ -608,8 +637,8 @@ function renderActresses() {
 
 function renderStudios() {
   const studios = sortedPeople(peopleWithVisibleImages(state.library.studios, "studio"));
-  state.currentRenderedMovieKeys = [];
-  state.currentRenderedTitle = "";
+  state.currentRenderedMovieKeys = peopleMovieKeysInViewOrder("studio");
+  state.currentRenderedTitle = "Studios";
   app.innerHTML = `
     <div class="section-head">
       <div>
@@ -996,7 +1025,9 @@ async function openTemporaryPlaylist(name, movieKeys) {
 }
 
 function openCurrentGridPlaylist() {
-  openTemporaryPlaylist(state.currentRenderedTitle || "Temporary Playlist", state.currentRenderedMovieKeys).catch((error) => showToast(error.message));
+  const movieKeys = currentPlaybackMovieKeys();
+  const name = state.selectedMovieKeys.size || state.selectedPersonKeys.length ? "Checked Selection" : state.currentRenderedTitle || "Temporary Playlist";
+  openTemporaryPlaylist(name, movieKeys).catch((error) => showToast(error.message));
 }
 
 function openPersonPlaylist(type, name) {
@@ -1218,6 +1249,10 @@ document.querySelector("#lightbox").addEventListener("click", (event) => {
   if (event.target.id === "lightbox") {
     document.querySelector("#lightbox").hidden = true;
   }
+});
+document.addEventListener("click", (event) => {
+  if (!optionsMenu.open || optionsMenu.contains(event.target)) return;
+  optionsMenu.open = false;
 });
 document.querySelector("#prevImage").addEventListener("click", () => {
   state.lightboxIndex = (state.lightboxIndex - 1 + state.lightboxItems.length) % state.lightboxItems.length;

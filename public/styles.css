@@ -680,9 +680,18 @@ input[type="range"] {
   cursor: pointer;
 }
 
+.detail-info {
+  position: relative;
+  padding-bottom: 34px;
+}
+
 .detail-info h2 {
   margin: 0 34px 8px 0;
   font-size: 24px;
+}
+
+.detail-info .id-chip-bottom {
+  right: 8px;
 }
 
 .detail-info dl {

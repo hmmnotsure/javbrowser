@@ -18,7 +18,8 @@ This project is completely vibe-coded using Codex. I use it personally, it works
 - Sort movies by actress, counter, file size, random order, release date, or title.
 - Sort actresses and studios by name, movie count, random order, or favorite status.
 - Open a full-screen cover or poster viewer from the current sorted list.
-- Play one movie, a person/studio group, the visible sorted list, or a saved playlist.
+- Play one movie, a person/studio group, all currently listed items, checked items, or a saved playlist.
+- Use the top play button to play checked items, or everything currently listed when nothing is checked.
 - Native mode can launch videos and playlists in your default desktop app.
 - Create playlists from checked movies, actresses, studios, or the current browsing order.
 - Add checked items to the currently selected playlist.
@@ -27,6 +28,7 @@ This project is completely vibe-coded using Codex. I use it personally, it works
 - Per-movie counter, similar in spirit to Stash counters.
 - Light, dark, and system theme modes.
 - Adjustable cover, poster, person-card, and lightbox sizing.
+- Options menu for image-wall mode, missing-image hiding, and ID labels.
 - Image-wall mode for denser browsing.
 - Hide missing images.
 - Optional movie ID labels in image-wall mode.
@@ -274,6 +276,12 @@ Edit `docker-compose.yml` and replace the placeholder media path:
 ```yaml
 services:
   javbrowser:
+    build: .
+    # If you want to use the prebuilt image instead of building locally:
+    # image: ghcr.io/hmmnotsure/javbrowser:latest
+    container_name: javbrowser
+    ports:
+      - "3367:3000"
     environment:
       MEDIA_ROOT: /media
       HOST_PATH: "/path/to/media"
@@ -351,7 +359,7 @@ Actress and studio views can sort by:
 - Random
 - Favorite
 
-The current sort matters. The grid play button and the full-screen cover/poster viewers use the currently sorted order.
+The current sort matters. The top play button and the full-screen cover/poster viewers use the currently sorted order.
 
 ## Cover And Poster Viewers
 
@@ -361,11 +369,15 @@ The **View Covers** and **View Posters** buttons open a full-screen viewer for t
 
 The viewer has its own zoom control, favorite button, counter controls, and play button.
 
+## Options Menu
+
+The **Options** menu controls image-wall mode, missing-image hiding, and movie ID labels in image-wall mode. Clicking anywhere outside the menu closes it.
+
 ## Playing Movies
 
 You can hit play from movie cards, actress cards, studio cards, the lightbox, playlists, or the top toolbar.
 
-In native mode with `ENABLE_HOST_OPEN=true`, javbrowser launches videos or generated playlists in the system default app. From a sorted grid, the top play button creates a temporary playlist in the current visible order.
+In native mode with `ENABLE_HOST_OPEN=true`, javbrowser launches videos or generated playlists in the system default app. From any view, the top play button creates a temporary playlist. If nothing is checked, it plays everything currently listed in the current order. If anything is checked, it plays only the checked movies, actresses, or studios in the current order.
 
 In Docker mode, javbrowser cannot reliably launch host desktop apps from inside the container. It still exposes the mapped host path and attempts a browser handoff where possible.
 
@@ -379,7 +391,8 @@ You can:
 - Check actresses or studios to include their movies.
 - Create a playlist from checked items.
 - Add checked items to the currently selected playlist with the `+` button.
-- Play the current sorted grid as a temporary playlist.
+- Play all currently listed items as a temporary playlist when nothing is checked.
+- Play only checked movies, actresses, or studios as a temporary playlist when anything is checked.
 - Save playlists.
 - Rename playlists.
 - Favorite playlists.
