@@ -410,7 +410,11 @@ function updatePlaylistControls() {
   playlistFavoriteBtn.classList.toggle("active", Boolean(playlist?.favorite));
   playlistFavoriteBtn.textContent = playlist?.favorite ? "♥" : "♡";
   playlistSaveBtn.classList.toggle("active", state.playlistDirty);
-  selectionClearBtn.hidden = (state.selectedMovieKeys.size + state.selectedPersonKeys.length) !== 1;
+  const selectionCount = state.selectedMovieKeys.size + state.selectedPersonKeys.length;
+  selectionClearBtn.hidden = selectionCount === 0;
+  const addingToExistingPlaylist = Boolean(state.currentPlaylistId && !state.playlistDraft && state.view !== "playlist");
+  playlistCreateBtn.title = addingToExistingPlaylist ? "Add checked items to selected playlist" : "New playlist from checked items";
+  playlistCreateBtn.setAttribute("aria-label", playlistCreateBtn.title);
   gridPlayBtn.hidden = !state.currentRenderedMovieKeys.length;
 }
 
@@ -1024,10 +1028,21 @@ function toggleCurrentPlaylistFavorite() {
   render();
 }
 
-function createPlaylistDraft() {
+function createOrUpdatePlaylistFromSelection() {
   if (state.view === "playlist" && !canLeavePlaylistEdits()) return;
   const movieKeys = selectedPlaylistMovieKeys();
   if (!movieKeys.length) return showToast("Check movies or people before creating a playlist.");
+  const playlist = !state.playlistDraft && state.currentPlaylistId ? currentPlaylist() : null;
+  if (playlist) {
+    state.playlistEditKeys = new Set([...(playlist.movieKeys || []), ...movieKeys]);
+    state.playlistDirty = true;
+    state.selectedMovieKeys.clear();
+    state.selectedPersonKeys = [];
+    state.lastCheckedMovieKey = "";
+    showToast(`Added checked items to "${playlist.name}". Save the playlist to keep them.`);
+    goTo({ view: "playlist" });
+    return;
+  }
   state.playlistDraft = {
     id: "__draft__",
     name: defaultPlaylistName(),
@@ -1102,7 +1117,7 @@ document.querySelectorAll(".nav button").forEach((btn) => {
   });
 });
 gridPlayBtn.addEventListener("click", openCurrentGridPlaylist);
-playlistCreateBtn.addEventListener("click", createPlaylistDraft);
+playlistCreateBtn.addEventListener("click", createOrUpdatePlaylistFromSelection);
 selectionClearBtn.addEventListener("click", clearSingleSelection);
 playlistSelect.addEventListener("change", () => {
   const id = playlistSelect.value;

@@ -21,6 +21,7 @@ This project is completely vibe-coded using Codex. I use it personally, it works
 - Play one movie, a person/studio group, the visible sorted list, or a saved playlist.
 - Native mode can launch videos and playlists in your default desktop app.
 - Create playlists from checked movies, actresses, studios, or the current browsing order.
+- Add checked items to the currently selected playlist.
 - Save, rename, favorite, delete, play, and download playlists.
 - Favorites for movies, actresses, studios, and playlists.
 - Per-movie counter, similar in spirit to Stash counters.
@@ -377,6 +378,7 @@ You can:
 - Check individual movies.
 - Check actresses or studios to include their movies.
 - Create a playlist from checked items.
+- Add checked items to the currently selected playlist with the `+` button.
 - Play the current sorted grid as a temporary playlist.
 - Save playlists.
 - Rename playlists.
