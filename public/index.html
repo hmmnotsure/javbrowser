@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>javbrowser</title>
+    <link rel="icon" type="image/png" href="/favicon.png">
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>javbrowser</h1>
+        <p id="status">Loading library...</p>
+      </div>
+      <nav class="nav">
+        <button id="backBtn" class="toolbar-icon" title="Back" aria-label="Back" disabled>←</button>
+        <button data-view="covers" class="active">Covers</button>
+        <button data-view="posters">Posters</button>
+        <button data-view="actresses">Actresses</button>
+        <button data-view="studios">Studios</button>
+        <button data-view="other">Other Videos</button>
+        <button id="gridPlayBtn" class="toolbar-icon" title="Play current list as temporary playlist" aria-label="Play current list as temporary playlist">▶</button>
+      </nav>
+      <div class="top-actions">
+        <button id="playlistCreateBtn" class="toolbar-icon" title="New playlist from checked items" aria-label="New playlist from checked items">+</button>
+        <button id="selectionClearBtn" class="toolbar-icon" title="Clear checked item" aria-label="Clear checked item" hidden>×</button>
+        <select id="playlistSelect" aria-label="Playlists">
+          <option value="">Playlists</option>
+        </select>
+        <button id="playlistOpenBtn" class="toolbar-icon" title="Play playlist" aria-label="Play playlist" hidden>▶</button>
+        <button id="playlistFavoriteBtn" class="toolbar-icon" title="Favorite playlist" aria-label="Favorite playlist" hidden>♡</button>
+        <button id="playlistSaveBtn" class="toolbar-icon" title="Save playlist" aria-label="Save playlist" hidden>▣</button>
+        <button id="playlistRenameBtn" class="toolbar-icon" title="Rename playlist" aria-label="Rename playlist" hidden>✎</button>
+        <button id="playlistDownloadBtn" class="toolbar-icon" title="Download playlist" aria-label="Download playlist" hidden>⇩</button>
+        <button id="playlistDeleteBtn" class="toolbar-icon" title="Delete playlist" aria-label="Delete playlist" hidden>×</button>
+        <label>
+          Theme
+          <select id="themeSelect">
+            <option value="dark">Dark</option>
+            <option value="light">Light</option>
+            <option value="system">System</option>
+          </select>
+        </label>
+        <button id="scanBtn" class="primary">Scan</button>
+      </div>
+    </header>
+
+    <main>
+      <section class="toolbar" id="toolbar">
+        <div class="segmented">
+          <button id="viewCovers">View Covers</button>
+          <button id="viewPosters">View Posters</button>
+        </div>
+        <div class="sort-control">
+          <label>
+            Sort
+            <select id="sortSelect">
+              <option value="actress">Actress</option>
+              <option value="counter">Counter</option>
+              <option value="fileSize">File Size</option>
+              <option value="random">Random</option>
+              <option value="releaseDate">Release Date</option>
+              <option value="title">Title</option>
+            </select>
+          </label>
+          <button id="favoritesFilterBtn" class="toolbar-icon" title="Favorites only" aria-label="Favorites only">♡</button>
+        </div>
+        <div class="toolbar-right">
+          <details class="options-menu" id="optionsMenu">
+            <summary>Options</summary>
+            <div class="options-panel">
+              <label class="toggle">
+                <input type="checkbox" id="hideMissingToggle">
+                Hide missing images
+              </label>
+              <label class="toggle">
+                <input type="checkbox" id="minimalToggle">
+                Image wall
+              </label>
+              <label class="toggle">
+                <input type="checkbox" id="wallIdsToggle">
+                Show IDs
+              </label>
+            </div>
+          </details>
+          <label>
+            Size
+            <input type="range" id="imageSizeSlider" min="120" max="420" step="10">
+          </label>
+        </div>
+      </section>
+      <section id="app" class="content"></section>
+    </main>
+
+    <div id="detail" class="modal" hidden>
+      <div class="modal-panel detail-panel">
+        <button class="icon close" data-close="detail">x</button>
+        <div id="detailBody"></div>
+      </div>
+    </div>
+
+    <div id="lightbox" class="modal lightbox" hidden>
+      <button class="icon close" data-close="lightbox">x</button>
+      <button class="icon prev" id="prevImage">&lt;</button>
+      <figure>
+        <div class="lightbox-viewport">
+          <img id="lightboxImage" alt="">
+        </div>
+        <figcaption>
+          <div id="lightboxCaption" class="lightbox-title"></div>
+          <div class="lightbox-control-row">
+            <div id="lightboxMeta" class="lightbox-meta"></div>
+            <div class="lightbox-zoom-group">
+              <button id="lightboxLimitBtn" class="toolbar-icon" title="Limit size" aria-label="Limit size"></button>
+              <label class="lightbox-size">
+                Zoom
+                <input type="range" id="lightboxSizeSlider" min="100" max="300" step="10" value="100">
+              </label>
+            </div>
+            <div class="lightbox-actions">
+              <button id="lightboxFavoriteBtn" class="toolbar-icon" data-action="favorite-movie" title="Favorite" aria-label="Favorite">♡</button>
+              <button id="lightboxCounterMinus" class="toolbar-icon" data-action="counter-minus" title="Subtract counter" aria-label="Subtract counter">−</button>
+              <span id="lightboxCounterValue" class="detail-counter">0</span>
+              <button id="lightboxCounterPlus" class="toolbar-icon" data-action="counter-plus" title="Add counter" aria-label="Add counter">+</button>
+              <button id="lightboxOpen" class="toolbar-icon" data-action="open" title="Play" aria-label="Play">▶</button>
+            </div>
+          </div>
+        </figcaption>
+      </figure>
+      <button class="icon next" id="nextImage">&gt;</button>
+    </div>
+
+    <div id="toast" class="toast" hidden></div>
+    <button id="scrollTopBtn" class="scroll-top" title="Scroll to top" aria-label="Scroll to top" hidden>↑</button>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
