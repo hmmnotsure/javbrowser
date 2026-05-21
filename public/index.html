@@ -10,8 +10,17 @@
   <body>
     <header class="topbar">
       <div>
-        <h1>javbrowser</h1>
-        <p id="status">Loading library...</p>
+        <a class="brand-link" href="https://github.com/hmmnotsure/javbrowser" target="_blank" rel="noopener">
+          <img src="/favicon.png" alt="" class="brand-icon">
+          <span>javbrowser</span>
+        </a>
+        <div id="status" class="status-block">
+          <div id="statusStats">Loading library...</div>
+          <div id="statusScan"></div>
+        </div>
+        <div id="scanProgress" class="scan-progress" hidden>
+          <div id="scanProgressBar"></div>
+        </div>
       </div>
       <nav class="nav">
         <button id="backBtn" class="toolbar-icon" title="Back" aria-label="Back" disabled>←</button>
@@ -19,7 +28,7 @@
         <button data-view="posters">Posters</button>
         <button data-view="actresses">Actresses</button>
         <button data-view="studios">Studios</button>
-        <button data-view="other">Other Videos</button>
+        <button data-view="images">Images</button>
         <button id="gridPlayBtn" class="toolbar-icon" title="Play current list as temporary playlist" aria-label="Play current list as temporary playlist">▶</button>
       </nav>
       <div class="top-actions">
@@ -36,13 +45,12 @@
         <button id="playlistDeleteBtn" class="toolbar-icon" title="Delete playlist" aria-label="Delete playlist" hidden>×</button>
         <label>
           Theme
-          <select id="themeSelect">
-            <option value="dark">Dark</option>
-            <option value="light">Light</option>
-            <option value="system">System</option>
-          </select>
+          <select id="themeSelect"></select>
         </label>
         <button id="scanBtn" class="primary">Scan</button>
+        <button id="settingsBtn" class="toolbar-icon" title="Settings" aria-label="Settings">
+          <svg class="button-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z"></path><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1A2 2 0 1 1 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3h.1A1.7 1.7 0 0 0 10 3.1V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5h.1a1.7 1.7 0 0 0 1.9-.3l.1-.1A2 2 0 1 1 19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9v.1a1.7 1.7 0 0 0 1.5.9h.1a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"></path></svg>
+        </button>
       </div>
     </header>
 
@@ -73,6 +81,10 @@
               <label class="toggle">
                 <input type="checkbox" id="hideMissingToggle">
                 Hide missing images
+              </label>
+              <label class="toggle">
+                <input type="checkbox" id="hideNoNfoToggle">
+                Hide movies without NFO
               </label>
               <label class="toggle">
                 <input type="checkbox" id="minimalToggle">
@@ -112,6 +124,13 @@
           <div class="lightbox-control-row">
             <div id="lightboxMeta" class="lightbox-meta"></div>
             <div class="lightbox-zoom-group">
+              <button id="slideshowBtn" class="toolbar-icon" title="Slideshow" aria-label="Slideshow">
+                <svg class="button-svg" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="14" height="14" rx="2"></rect><path d="M8 9l4 3-4 3z"></path><path d="M19 8v8"></path></svg>
+              </button>
+              <label class="lightbox-size">
+                Seconds
+                <input type="number" id="slideshowSeconds" min="1" max="120" step="1" value="5">
+              </label>
               <button id="lightboxLimitBtn" class="toolbar-icon" title="Limit size" aria-label="Limit size"></button>
               <label class="lightbox-size">
                 Zoom
@@ -124,6 +143,9 @@
               <span id="lightboxCounterValue" class="detail-counter">0</span>
               <button id="lightboxCounterPlus" class="toolbar-icon" data-action="counter-plus" title="Add counter" aria-label="Add counter">+</button>
               <button id="lightboxOpen" class="toolbar-icon" data-action="open" title="Play" aria-label="Play">▶</button>
+              <button id="setGalleryCoverBtn" data-action="set-gallery-art" data-kind="cover" hidden>Set as Cover</button>
+              <button id="setGalleryPosterBtn" data-action="set-gallery-art" data-kind="poster" hidden>Set as Poster</button>
+              <button id="setActressImageBtn" data-action="set-actress-image" hidden>Set as Actress Image</button>
             </div>
           </div>
         </figcaption>
@@ -133,6 +155,23 @@
 
     <div id="toast" class="toast" hidden></div>
     <button id="scrollTopBtn" class="scroll-top" title="Scroll to top" aria-label="Scroll to top" hidden>↑</button>
+
+    <div id="settings" class="modal" hidden>
+      <div class="modal-panel settings-panel">
+        <button class="icon close" data-close="settings">x</button>
+        <h2>Settings</h2>
+        <h3>Gallery Scanning</h3>
+        <label class="settings-toggle">
+          <input type="checkbox" id="nestedGalleryToggle" data-action="nested-gallery-toggle">
+          <span>
+            Include Nested Gallery Folders
+            <small>Requires a rescan.</small>
+          </span>
+        </label>
+        <h3>Navigation</h3>
+        <div id="navSettings" class="settings-list"></div>
+      </div>
+    </div>
 
     <script src="/app.js" type="module"></script>
   </body>

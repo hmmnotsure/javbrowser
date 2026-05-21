@@ -12,36 +12,30 @@ I made it because I wanted a smaller browser that displayed my covers better and
 
 This project is completely vibe-coded using Codex. I use it personally, it works well for my workflow, and it is intentionally practical rather than architecturally precious. Expect a local-first hobby app, not a hardened multi-user server.
 
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for notable changes.
+
 ## Features
 
-- Browse by covers, posters, actresses, studios, or unmatched videos.
-- Sort movies by actress, counter, file size, random order, release date, or title.
-- Sort actresses and studios by name, movie count, random order, or favorite status.
-- Open a full-screen cover or poster viewer from the current sorted list.
-- Play one movie, a person/studio group, all currently listed items, checked items, or a saved playlist.
-- Use the top play button to play checked items, or everything currently listed when nothing is checked.
-- Native mode can launch videos and playlists in your default desktop app.
-- Create playlists from checked movies, actresses, studios, or the current browsing order.
-- Add checked items to the currently selected playlist.
-- Save, rename, favorite, delete, play, and download playlists.
-- Favorites for movies, actresses, studios, and playlists.
-- Per-movie counter, similar in spirit to Stash counters.
-- Light, dark, and system theme modes.
-- Adjustable cover, poster, person-card, and lightbox sizing.
-- Options menu for image-wall mode, missing-image hiding, and ID labels.
-- Image-wall mode for denser browsing.
-- Hide missing images.
-- Optional movie ID labels in image-wall mode.
-- Drag and drop actress images onto actress cards.
-- Drag and drop studio images onto studio cards.
-- "Other Videos" area for videos with no poster or cover artwork.
-- Automatic screenshot cover generation for other videos when `ffmpeg` is available.
-- Stores scan results, preferences, favorites, counters, playlists, and custom artwork in SQLite/config storage.
+- Browse movies by covers, posters, actresses, studios, or image galleries.
+- Browse image galleries by actress, with card/image-wall layouts and landscape/portrait filtering.
+- Sort movies, people, galleries, and images by useful fields, including random, counter, file size, title, release date, and path where relevant.
+- Play a movie, a person/studio group, checked items, the current sorted list, a gallery slideshow playlist, or a saved playlist.
+- Native mode can launch videos, images, and playlists in your default desktop apps.
+- Create, add to, save, rename, favorite, play, download, and delete playlists.
+- Favorites and counters for movies, people, galleries, and images.
+- Full-screen cover/poster viewers and image lightbox with slideshow, zoom, lock, favorite, and counter controls.
+- Adjustable sizing, image-wall mode, optional ID labels, multiple themes, and keyboard shortcuts.
+- Drag and drop actress and studio images; gallery images can also be copied as actress images.
+- Automatic screenshot cover generation for movies with missing artwork or duplicate shared covers when `ffmpeg` is available.
+- Regenerate generated screenshots from the movie detail card.
+- Scan progress, optional info/debug logs, and persistent SQLite/config storage.
 - Docker support for a portable containerized run.
 
 ## Recommended Setup
 
-Native mode is recommended if you want play buttons to open files directly in your desktop video player. Docker is useful if you want a tidy container, but browser/container security limits direct host-app launching.
+Native mode is recommended if you want play buttons to open files, images, and playlists directly in your desktop default apps. Docker is useful if you want a tidy container, but browser/container security limits direct host-app launching.
 
 javbrowser expects:
 
@@ -52,7 +46,35 @@ javbrowser expects:
 
 ## Folder Structure
 
-javbrowser scans every supported video file under `MEDIA_ROOT`, recursively. The folder tree does **not** have to be `Actress > Movie` as long as useful NFO files are present.
+javbrowser scans every supported video file under `MEDIA_ROOT`, recursively.
+
+The intended library shape is:
+
+```text
+/path/to/media/
+  Actress Name/
+    Movie Folder/
+      movie.mp4
+      movie.nfo
+      poster.jpg
+      fanart.jpg
+    Gallery Folder/
+      image-001.jpg
+      image-002.jpg
+```
+
+Top-level folders should be actress folders. If a movie has no actress in its NFO and javbrowser cannot infer one from the top-level folder, it is grouped under an actress named `No Actress`. `No Actress` is always sorted to the end of actress lists.
+
+For multiple actresses in a folder name, javbrowser recognizes separators like:
+
+```text
+Actress One, Actress Two/
+Actress One & Actress Two/
+Actress One + Actress Two/
+Actress One and Actress Two/
+```
+
+NFO actress names always override folder inference.
 
 Supported video extensions:
 
@@ -82,27 +104,28 @@ This shape works especially well with Javinizer-style libraries:
 
 With this layout, javbrowser can infer a fallback actress from the top-level folder and may find actress images from `folder.jpg`, `folder.png`, `folder.jpeg`, or `folder.webp` in the actress folder.
 
-### Movie Folders Also Work
+### Movie Folders With NFOs
 
-This works well when each movie folder has an NFO:
+Movie folders work well when each movie folder has an NFO. The top-level folder is still treated as the actress fallback if the NFO has no actor names.
 
 ```text
 /path/to/media/
-  Movie A/
-    movie-a.mp4
-    movie-a.nfo
-    poster.jpg
-    cover.jpg
-  Movie B/
-    movie-b.mkv
-    movie-b.nfo
-    poster.jpg
-    fanart.jpg
+  Actress Name/
+    Movie A/
+      movie-a.mp4
+      movie-a.nfo
+      poster.jpg
+      cover.jpg
+    Movie B/
+      movie-b.mkv
+      movie-b.nfo
+      poster.jpg
+      fanart.jpg
 ```
 
-### Flat Folders Can Work
+### Flat Folders
 
-This can work too:
+Flat folders can scan, but they are not recommended because there is no actress folder to infer from:
 
 ```text
 /path/to/media/
@@ -172,7 +195,7 @@ Actress Name/
     ABC-123.mp4
 ```
 
-Movies with no NFO and no useful folder structure will still appear, but they may have weak titles, unknown studios, and no actress grouping.
+Movies with no NFO and no useful folder structure will still appear, but they may have weak titles, unknown studios, and appear under `No Actress`.
 
 ## Artwork Naming
 
@@ -223,11 +246,70 @@ folder.webp
 
 Studio images are managed from inside javbrowser by dragging an image onto a studio card. They are stored in the config folder.
 
-## Other Videos
+Dragged actress and studio images are saved as JPG. If you drop a PNG, WebP, GIF, or other browser-readable image, javbrowser converts it before saving.
 
-An "other video" is a video that javbrowser can scan but cannot find poster or cover artwork for.
+## Image Galleries
 
-Other videos are separated into the **Other Videos** view so they do not pollute the main cover/poster walls. If `ffmpeg` is available, javbrowser can generate a screenshot cover and store it in the config folder, but the video is still considered "other" because no real library artwork was found.
+The **Images** view scans image galleries under actress folders. This is separate from movie posters and covers.
+
+A gallery is any folder under an actress folder that:
+
+- Contains at least one image.
+- Does not contain an NFO file directly inside that same folder.
+
+Videos inside gallery folders are still scanned as movies. If you open a gallery that contains movies, javbrowser shows a **View Movies** button. If you open a movie that lives inside a gallery folder, the movie detail card shows **View Gallery**.
+
+Nested gallery folders are supported:
+
+```text
+/path/to/media/
+  Actress Name/
+    Movie Folder/
+      ABC-123.mp4
+      ABC-123.nfo
+    Gallery Title/
+      image-001.jpg
+      image-002.png
+    Trips/
+      Beach Set/
+        wide-001.webp
+        portrait-001.jpg
+```
+
+In this example, `Gallery Title`, `Trips`, and `Beach Set` can be galleries if they contain images and no direct NFO. `Movie Folder` is not a gallery because it contains an NFO file.
+
+By default, nested galleries count separately. If `Trips` contains images and `Trips/Beach Set` also contains images, both can appear as galleries. Movies directly in `Trips` belong to `Trips`; movies directly in `Beach Set` belong to `Beach Set`.
+
+The settings menu includes **Include Nested Gallery Folders**. When enabled, a parent gallery includes nested gallery folders and nested videos, and those nested folders do not appear as separate galleries. If both a parent and nested folder have `cover.*`, the parent cover wins for the parent gallery. This setting is global and persistent; scan again after changing it.
+
+Gallery folder names can include the actress name as a prefix:
+
+```text
+Actress Name - Beach Set/
+Name Actress - Beach Set/
+```
+
+javbrowser displays those as `Beach Set`. If there is no matching prefix, it displays the folder name as-is.
+
+Supported image extensions:
+
+```text
+.jpg
+.jpeg
+.png
+.webp
+.gif
+```
+
+For each gallery, javbrowser first looks for a file named `cover.*` and uses it as the gallery cover when present. If there is no `cover.*`, it automatically picks a landscape image as the cover when possible. It also picks a portrait image as the poster when possible. You can override those choices from the image lightbox or the image-card menu. The image files are not moved or renamed; the selected cover/poster choice is stored in the config database.
+
+## Generated Screenshots
+
+If a movie has no usable cover image, javbrowser can generate a screenshot cover from a random timestamp when `ffmpeg` is available.
+
+If one cover image is associated with multiple movie files, javbrowser also generates a per-movie screenshot cover so each movie gets distinct artwork. These movies stay in the regular movie views.
+
+Movies using generated screenshots show **Regenerate Screenshot** in the movie detail card. That creates a fresh random-timestamp screenshot and updates the movie card/detail artwork throughout the app.
 
 ## Native Setup
 
@@ -240,6 +322,7 @@ MEDIA_ROOT="/path/to/media" \
 CONFIG_ROOT="/path/to/config" \
 HOST_PATH="/path/to/media" \
 ENABLE_HOST_OPEN=true \
+LOG_LEVEL=info \
 PORT=3000 \
 npm start
 ```
@@ -251,6 +334,7 @@ $env:MEDIA_ROOT="C:\Path\To\Media"
 $env:CONFIG_ROOT="C:\Path\To\Config"
 $env:HOST_PATH="C:\Path\To\Media"
 $env:ENABLE_HOST_OPEN="true"
+$env:LOG_LEVEL="info"
 $env:PORT="3000"
 npm start
 ```
@@ -268,6 +352,8 @@ Native play support uses:
 - Linux: `xdg-open`
 
 `HOST_PATH` should usually match `MEDIA_ROOT` in native mode. It exists so Docker can map container paths back to host paths.
+
+Set `LOG_LEVEL=info` for scan/startup logs, or `LOG_LEVEL=debug` for detailed scan decisions such as gallery candidates and progress updates. The default is `warn`.
 
 ## Docker Setup
 
@@ -287,6 +373,7 @@ services:
       HOST_PATH: "/path/to/media"
       PORT: 3000
       CONFIG_ROOT: /config
+      LOG_LEVEL: warn
     volumes:
       - "/path/to/media:/media"
       - "./config:/config"
@@ -335,8 +422,10 @@ Scanning:
 - Walks every video under `MEDIA_ROOT`.
 - Reads nearby NFO metadata.
 - Finds poster and cover artwork.
-- Generates fallback screenshot covers for other videos when possible.
-- Builds movie, actress, studio, and other-video views.
+- Uses gallery `cover.*` files as default gallery covers when present.
+- Generates fallback screenshot covers for movies without cover artwork when possible.
+- Generates per-movie screenshot covers when one cover image is shared by multiple movie files.
+- Builds movie, actress, studio, and gallery views.
 - Saves scan results to SQLite.
 
 Scan again whenever you add movies, edit NFO files, rename artwork, or change folder structure.
@@ -371,7 +460,7 @@ The viewer has its own zoom control, favorite button, counter controls, and play
 
 ## Options Menu
 
-The **Options** menu controls image-wall mode, missing-image hiding, and movie ID labels in image-wall mode. Clicking anywhere outside the menu closes it.
+The **Options** menu controls image-wall mode, missing-image hiding, hiding movies without NFO metadata where relevant, and movie ID labels in image-wall mode. Clicking anywhere outside the menu closes it.
 
 ## Playing Movies
 
@@ -380,6 +469,54 @@ You can hit play from movie cards, actress cards, studio cards, the lightbox, pl
 In native mode with `ENABLE_HOST_OPEN=true`, javbrowser launches videos or generated playlists in the system default app. From any view, the top play button creates a temporary playlist. If nothing is checked, it plays everything currently listed in the current order. If anything is checked, it plays only the checked movies, actresses, or studios in the current order.
 
 In Docker mode, javbrowser cannot reliably launch host desktop apps from inside the container. It still exposes the mapped host path and attempts a browser handoff where possible.
+
+## Keyboard Shortcuts
+
+Shortcuts do not fire while typing in an input or select menu.
+
+General browsing:
+
+- `1` Covers, `2` Posters, `3` Actresses, `4` Studios, `5` Images.
+- `Enter` plays the current listed/checked items.
+- `Backspace` goes back and restores your previous scroll position.
+- `Escape` closes open menus, detail cards, or lightboxes.
+- `c` switches the current listing to covers where relevant.
+- `p` switches the current listing to posters where relevant, or toggles portrait images while viewing a gallery.
+- `l` toggles landscape images while viewing a gallery.
+- `f` toggles the Favorites filter.
+- `r` randomizes or re-randomizes the current listing.
+- `s` cycles to the next sort option.
+- `0` cycles themes.
+- `t` presses Back to Top.
+- `w` toggles image wall mode.
+- `m` toggles Hide Missing Images.
+- `n` toggles Hide Movies Without NFO where relevant.
+- `i` toggles movie IDs while in image wall mode.
+- `v` opens View Covers.
+- `b` opens View Posters.
+- `Shift+Up` increases listing size.
+- `Shift+Down` decreases listing size.
+- `a` selects all visible checkable items.
+- `x` clears current selections.
+- `\` adds checked items to the selected playlist, or starts a new playlist when none is selected.
+
+Movie detail card:
+
+- `Enter` plays the movie.
+- `Escape` closes the card.
+- `f` favorites/unfavorites the movie.
+- `+` increases the counter.
+- `-` decreases the counter.
+
+Lightbox:
+
+- `s` or `Space` toggles slideshow.
+- `Shift+Up` zooms in.
+- `Shift+Down` zooms out.
+- `l` toggles lock.
+- `f` favorites/unfavorites the current item.
+- `+` increases the counter.
+- `-` decreases the counter.
 
 ## Playlists
 

@@ -18,18 +18,36 @@ const OTHER_IMAGE_ROOT = path.join(CONFIG_ROOT, "other-artwork");
 const DB_PATH = path.join(CONFIG_ROOT, "javbrowser.db");
 const USER_DATA_PATH = path.join(CONFIG_ROOT, "user-data.json");
 const ENABLE_HOST_OPEN = process.env.ENABLE_HOST_OPEN === "true";
+const LOG_LEVEL = String(process.env.LOG_LEVEL || "warn").toLowerCase();
+const LOG_LEVELS = { silent: 0, error: 1, warn: 2, info: 3, debug: 4 };
+const CURRENT_LOG_LEVEL = LOG_LEVELS[LOG_LEVEL] ?? LOG_LEVELS.warn;
 
 const VIDEO_EXTS = new Set([".mp4", ".mkv", ".wmv", ".mov", ".avi", ".m4v", ".webm"]);
-const IMAGE_EXTS = [".jpg", ".jpeg", ".png", ".webp"];
+const IMAGE_EXTS = [".jpg", ".jpeg", ".png", ".webp", ".gif"];
 const NFO_EXT = ".nfo";
+const NO_ACTRESS = "No Actress";
 
 let db;
-let library = { scannedAt: null, movies: [], actresses: [], studios: [], otherVideos: [], totals: {}, userData: {}, preferences: {} };
-let userData = { favorites: { movies: {}, actresses: {}, studios: {} }, counters: { movies: {} } };
+let library = { scannedAt: null, movies: [], actresses: [], studios: [], otherVideos: [], images: [], imageGalleries: [], imageActresses: [], totals: {}, userData: {}, preferences: {} };
+let userData = { favorites: { movies: {}, actresses: {}, studios: {}, images: {}, galleries: {}, imageActresses: {} }, counters: { movies: {}, images: {} } };
 let preferences = {};
 let playlists = [];
+let scanProgress = { active: false, percent: 0, message: "Idle" };
 let ffmpegToolPromise;
 let ffprobeToolPromise;
+
+function log(level, message, details) {
+  if ((LOG_LEVELS[level] || 0) > CURRENT_LOG_LEVEL) return;
+  const line = `[${new Date().toISOString()}] ${level.toUpperCase()} ${message}`;
+  const writer = level === "error" ? console.error : level === "warn" ? console.warn : console.log;
+  if (details === undefined) writer(line);
+  else writer(line, details);
+}
+
+function setScanProgress(percent, message) {
+  scanProgress = { active: percent < 100, percent: Math.max(0, Math.min(100, percent)), message };
+  log("debug", `Scan progress: ${Math.round(scanProgress.percent)}% ${message}`);
+}
 
 function normalizeName(value) {
   return String(value || "").trim().replace(/\s+/g, " ");
@@ -84,6 +102,47 @@ function slugFor(value) {
 function playlistFileName(name, id) {
   const safe = normalizeName(name).replace(/[<>:"/\\|?*\u0000-\u001f]+/g, "-").slice(0, 120);
   return `${safe || "playlist"}-${id.slice(0, 8)}.m3u`;
+}
+
+function galleryDisplayTitle(actressName, folderName) {
+  const cleanFolder = normalizeName(folderName);
+  const names = unique([normalizeName(actressName), reversedTwoPartName(actressName)]);
+  for (const name of names) {
+    const prefix = `${name} - `;
+    if (cleanFolder.startsWith(prefix)) return cleanFolder.slice(prefix.length);
+  }
+  return cleanFolder;
+}
+
+function imageKeyFor(filePath) {
+  return `image:${routeId(filePath)}`;
+}
+
+function galleryKeyFor(dir) {
+  return `gallery:${Buffer.from(path.relative(MEDIA_ROOT, dir)).toString("base64url")}`;
+}
+
+function isWithinDir(parent, child) {
+  const relative = path.relative(parent, child);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+async function dirHasNfo(dir) {
+  const entries = await safeReadDir(dir);
+  return entries.some((entry) => entry.isFile() && path.extname(entry.name).toLowerCase() === NFO_EXT);
+}
+
+async function collectGalleryImages(dir, recursive, out = []) {
+  const entries = await safeReadDir(dir);
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (recursive && !(await dirHasNfo(full))) await collectGalleryImages(full, recursive, out);
+    } else if (IMAGE_EXTS.includes(path.extname(entry.name).toLowerCase())) {
+      out.push({ dir, file: entry });
+    }
+  }
+  return out;
 }
 
 function toolCandidates(name) {
@@ -164,7 +223,7 @@ function namesEquivalent(a, b) {
 }
 
 function splitActresses(value) {
-  return unique(String(value || "").split(",").map((part) => part.trim()));
+  return unique(String(value || "").split(/\s*(?:,|&|\+|\band\b)\s*/i).map((part) => part.trim()));
 }
 
 function movieIdFromFile(filePath) {
@@ -210,13 +269,15 @@ async function videoDuration(videoPath) {
   return Number.isFinite(duration) ? duration : 0;
 }
 
-async function findOrCreateGeneratedCover(movieKey, videoPath) {
+async function findOrCreateGeneratedCover(movieKey, videoPath, force = false) {
   const output = generatedArtworkPath(movieKey);
-  try {
-    const cached = await stat(output);
-    if (cached.isFile() && cached.size > 0) return output;
-  } catch {
-    // Missing cache file; generate one when ffmpeg is available.
+  if (!force) {
+    try {
+      const cached = await stat(output);
+      if (cached.isFile() && cached.size > 0) return output;
+    } catch {
+      // Missing cache file; generate one when ffmpeg is available.
+    }
   }
   try {
     const ffmpeg = await ffmpegTool();
@@ -240,7 +301,7 @@ async function findOrCreateGeneratedCover(movieKey, videoPath) {
     ]);
     return output;
   } catch (error) {
-    console.warn(`Could not generate cover for ${videoPath}: ${error.message}`);
+    log("warn", `Could not generate cover for ${videoPath}: ${error.message}`);
     return "";
   }
 }
@@ -274,6 +335,42 @@ function fileSizeLabel(bytes) {
     unit += 1;
   }
   return `${size >= 10 || unit === 0 ? size.toFixed(0) : size.toFixed(1)} ${units[unit]}`;
+}
+
+async function imageDimensions(filePath) {
+  try {
+    const buffer = await readFile(filePath);
+    if (buffer.length >= 24 && buffer.toString("ascii", 1, 4) === "PNG") {
+      return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) };
+    }
+    if (buffer.length >= 10 && buffer.toString("ascii", 0, 3) === "GIF") {
+      return { width: buffer.readUInt16LE(6), height: buffer.readUInt16LE(8) };
+    }
+    if (buffer.length >= 12 && buffer.toString("ascii", 0, 4) === "RIFF" && buffer.toString("ascii", 8, 12) === "WEBP") {
+      const chunk = buffer.toString("ascii", 12, 16);
+      if (chunk === "VP8X" && buffer.length >= 30) return { width: 1 + buffer.readUIntLE(24, 3), height: 1 + buffer.readUIntLE(27, 3) };
+      if (chunk === "VP8 " && buffer.length >= 30) return { width: buffer.readUInt16LE(26) & 0x3fff, height: buffer.readUInt16LE(28) & 0x3fff };
+      if (chunk === "VP8L" && buffer.length >= 25) {
+        const bits = buffer.readUInt32LE(21);
+        return { width: 1 + (bits & 0x3fff), height: 1 + ((bits >> 14) & 0x3fff) };
+      }
+    }
+    if (buffer[0] === 0xff && buffer[1] === 0xd8) {
+      let offset = 2;
+      while (offset + 9 < buffer.length) {
+        if (buffer[offset] !== 0xff) break;
+        const marker = buffer[offset + 1];
+        const length = buffer.readUInt16BE(offset + 2);
+        if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker)) {
+          return { width: buffer.readUInt16BE(offset + 7), height: buffer.readUInt16BE(offset + 5) };
+        }
+        offset += 2 + length;
+      }
+    }
+  } catch {
+    // Image dimensions are only used to choose default gallery art.
+  }
+  return { width: 0, height: 0 };
 }
 
 async function exists(filePath) {
@@ -321,6 +418,7 @@ async function parseNfo(dir) {
     const xml = await readFile(path.join(dir, nfo.name), "utf8");
     const actorBlocks = [...xml.matchAll(/<actor[^>]*>([\s\S]*?)<\/actor>/gi)].map((m) => m[1]);
     return {
+      hasNfo: true,
       id: xmlText(xml, "id") || xmlText(xml, "uniqueid") || xmlText(xml, "num") || xmlText(xml, "code"),
       title: xmlText(xml, "title"),
       studio: xmlText(xml, "studio") || xmlText(xml, "maker") || xmlText(xml, "label"),
@@ -328,7 +426,7 @@ async function parseNfo(dir) {
       releaseDate: xmlText(xml, "premiered") || xmlText(xml, "releasedate") || xmlText(xml, "date") || xmlText(xml, "year")
     };
   } catch {
-    return {};
+    return { hasNfo: true };
   }
 }
 
@@ -341,9 +439,172 @@ async function walk(dir, out = []) {
   return out;
 }
 
+async function walkGalleryDirs(dir, out = []) {
+  for (const entry of await safeReadDir(dir)) {
+    if (!entry.isDirectory()) continue;
+    const full = path.join(dir, entry.name);
+    out.push(full);
+    await walkGalleryDirs(full, out);
+  }
+  return out;
+}
+
+function hashRank(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function defaultGalleryImage(images, orientation) {
+  const oriented = images.filter((image) => orientation === "cover" ? image.width >= image.height : image.height > image.width);
+  const candidates = oriented.length ? oriented : images;
+  return [...candidates].sort((a, b) => hashRank(a.key).localeCompare(hashRank(b.key)))[0] || null;
+}
+
+function galleryArtSelections() {
+  const selections = new Map();
+  for (const row of db.prepare("SELECT gallery_key, cover_image_key, poster_image_key FROM gallery_art").all()) {
+    selections.set(row.gallery_key, { coverImageKey: row.cover_image_key || "", posterImageKey: row.poster_image_key || "" });
+  }
+  return selections;
+}
+
+async function scanImageGalleries() {
+  log("info", "Scanning image galleries");
+  const includeNested = Boolean(preferences.includeNestedGalleryFolders);
+  const images = [];
+  const galleries = [];
+  const actressMap = new Map();
+  const actressDirs = new Map();
+  const actressImages = new Map();
+  const artSelections = galleryArtSelections();
+  const topEntries = await safeReadDir(MEDIA_ROOT);
+  for (const entry of topEntries) {
+    if (!entry.isDirectory()) continue;
+    const actressName = normalizeName(entry.name);
+    const actressDir = path.join(MEDIA_ROOT, entry.name);
+    actressDirs.set(actressName, actressDir);
+    const absorbedDirs = [];
+    for (const dir of await walkGalleryDirs(actressDir)) {
+      if (includeNested && absorbedDirs.some((parent) => isWithinDir(parent, dir))) continue;
+      const entries = await safeReadDir(dir);
+      const files = entries.filter((item) => item.isFile());
+      if (files.some((item) => path.extname(item.name).toLowerCase() === NFO_EXT)) {
+        log("debug", `Skipping gallery candidate with NFO: ${dir}`);
+        continue;
+      }
+      const imageFiles = includeNested
+        ? await collectGalleryImages(dir, true)
+        : files.filter((item) => IMAGE_EXTS.includes(path.extname(item.name).toLowerCase())).map((file) => ({ dir, file }));
+      if (!imageFiles.length) continue;
+      if (includeNested) absorbedDirs.push(dir);
+      log("debug", `Found gallery candidate: ${dir}`, { images: imageFiles.length });
+      const galleryKey = galleryKeyFor(dir);
+      const galleryImages = [];
+      const titleCounts = new Map();
+      for (const { file } of imageFiles) {
+        const title = normalizeName(path.basename(file.name, path.extname(file.name)));
+        titleCounts.set(title, (titleCounts.get(title) || 0) + 1);
+      }
+      for (const { dir: imageDir, file } of imageFiles) {
+        const filePath = path.join(imageDir, file.name);
+        const imageStat = await stat(filePath);
+        const dimensions = await imageDimensions(filePath);
+        const baseTitle = normalizeName(path.basename(file.name, path.extname(file.name)));
+        const relImageDir = path.relative(dir, imageDir).split(path.sep).filter(Boolean).join(" / ");
+        const image = {
+          key: imageKeyFor(filePath),
+          galleryKey,
+          actressName,
+          title: titleCounts.get(baseTitle) > 1 && relImageDir ? `${relImageDir} / ${baseTitle}` : baseTitle,
+          filename: file.name,
+          filePath,
+          hostPath: hostPathFor(filePath),
+          fileSize: imageStat.size,
+          fileSizeLabel: fileSizeLabel(imageStat.size),
+          width: dimensions.width,
+          height: dimensions.height,
+          imageUrl: mediaUrl(filePath),
+          openUrl: ""
+        };
+        image.openUrl = `/api/images/open/${encodeURIComponent(image.key)}`;
+        images.push(image);
+        galleryImages.push(image);
+      }
+      if (!actressImages.has(actressName)) actressImages.set(actressName, []);
+      actressImages.get(actressName).push(...galleryImages);
+      const folderName = path.basename(dir);
+      const selection = artSelections.get(galleryKey) || {};
+      const folderCover = galleryImages.find((image) => path.basename(image.filename, path.extname(image.filename)).toLowerCase() === "cover");
+      const cover = galleryImages.find((image) => image.key === selection.coverImageKey) || folderCover || defaultGalleryImage(galleryImages, "cover");
+      const poster = galleryImages.find((image) => image.key === selection.posterImageKey) || defaultGalleryImage(galleryImages, "poster");
+      const gallery = {
+        key: galleryKey,
+        actressName,
+        title: galleryDisplayTitle(actressName, folderName),
+        folderName,
+        path: path.relative(MEDIA_ROOT, dir).split(path.sep).join("/"),
+        dir,
+        hostPath: hostPathFor(dir),
+        images: galleryImages.map((image) => image.key),
+        imageCount: galleryImages.length,
+        fileSize: galleryImages.reduce((sum, image) => sum + image.fileSize, 0),
+        fileSizeLabel: fileSizeLabel(galleryImages.reduce((sum, image) => sum + image.fileSize, 0)),
+        coverImageKey: cover?.key || "",
+        posterImageKey: poster?.key || "",
+        coverUrl: cover?.imageUrl || "",
+        posterUrl: poster?.imageUrl || ""
+      };
+      galleries.push(gallery);
+      if (!actressMap.has(actressName)) {
+        const actressImage = await findFirst(IMAGE_EXTS.map((ext) => path.join(actressDir, `folder${ext}`)));
+        actressMap.set(actressName, { name: actressName, galleries: [], galleryCount: 0, imageCount: 0, fileSize: 0, fileSizeLabel: "", imageUrl: mediaUrl(actressImage) });
+      }
+      const actress = actressMap.get(actressName);
+      actress.galleries.push(gallery.key);
+      actress.galleryCount += 1;
+      actress.imageCount += gallery.imageCount;
+      actress.fileSize += gallery.fileSize;
+    }
+  }
+  for (const actress of actressMap.values()) {
+    actress.fileSizeLabel = fileSizeLabel(actress.fileSize);
+    if (actress.imageUrl) continue;
+    const dir = actressDirs.get(actress.name);
+    const portraits = (actressImages.get(actress.name) || [])
+      .filter((image) => Number(image.height || 0) > Number(image.width || 0))
+      .sort((a, b) => hashRank(a.key).localeCompare(hashRank(b.key)));
+    for (const image of portraits) {
+      try {
+        await removeFolderImages(dir);
+        const filePath = path.join(dir, "folder.jpg");
+        await writeJpegFromImage(image.filePath, filePath);
+        actress.imageUrl = mediaUrl(filePath);
+        break;
+      } catch {
+        // Try another portrait image if this one cannot be copied or converted.
+      }
+    }
+  }
+  return {
+    images,
+    imageGalleries: galleries.sort((a, b) => collatorCompare(a.title, b.title)),
+    imageActresses: [...actressMap.values()].sort((a, b) => collatorCompare(a.name, b.name))
+  };
+}
+
+function collatorCompare(left, right) {
+  return String(left || "").localeCompare(String(right || ""), undefined, { sensitivity: "base", numeric: true });
+}
+
+function galleryForVideoPath(videoPath, galleries, includeNested) {
+  const dir = path.dirname(videoPath);
+  const candidates = galleries.filter((gallery) => includeNested ? isWithinDir(gallery.dir, dir) : path.resolve(gallery.dir) === path.resolve(dir));
+  if (!candidates.length) return null;
+  return candidates.sort((a, b) => path.relative(MEDIA_ROOT, b.dir).split(path.sep).length - path.relative(MEDIA_ROOT, a.dir).split(path.sep).length)[0];
+}
+
 function inferFromFolder(videoPath) {
   const relParts = path.relative(MEDIA_ROOT, videoPath).split(path.sep);
-  const actressFolder = relParts.length >= 3 ? relParts[0] : "";
+  const actressFolder = relParts.length >= 2 ? relParts[0] : NO_ACTRESS;
   const movieFolder = relParts.length >= 2 ? relParts[relParts.length - 2] : "";
   const id = movieIdFromFile(videoPath);
   const movieMatch = movieFolder.match(/^(.+?)\s+\[([^\]]+)\]\s+(.+)$/);
@@ -357,10 +618,19 @@ function inferFromFolder(videoPath) {
 }
 
 async function scanLibrary() {
+  log("info", "Starting library scan", { mediaRoot: MEDIA_ROOT, configRoot: CONFIG_ROOT });
+  setScanProgress(1, "Scanning image galleries...");
   const movies = [];
   const legacyKeyMap = new Map();
   const actressFolderMap = new Map();
-  for (const videoPath of await walk(MEDIA_ROOT)) {
+  const imageLibrary = await scanImageGalleries();
+  setScanProgress(12, "Finding videos...");
+  const videoPaths = await walk(MEDIA_ROOT);
+  log("info", `Found ${videoPaths.length} videos`);
+  let scannedVideos = 0;
+  for (const videoPath of videoPaths) {
+    scannedVideos += 1;
+    setScanProgress(12 + (videoPaths.length ? (scannedVideos / videoPaths.length) * 62 : 62), `Scanning videos (${scannedVideos}/${videoPaths.length})...`);
     const dir = path.dirname(videoPath);
     const fileId = movieIdFromFile(videoPath);
     const inferred = inferFromFolder(videoPath);
@@ -373,17 +643,18 @@ async function scanLibrary() {
     const videoStat = await stat(videoPath);
     const poster = await findArtwork(dir, id, "poster") || await findArtwork(dir, fileId, "poster");
     const cover = await findArtwork(dir, id, "cover") || await findArtwork(dir, fileId, "cover");
-    const isOther = !poster && !cover;
     const generatedCoverKey = `${baseKey}|path:${normalizeStoredPath(hostPath)}`;
     if (cover) {
       await unlink(generatedArtworkPath(generatedCoverKey)).catch(() => {});
       await unlink(legacyGeneratedArtworkPath(generatedCoverKey)).catch(() => {});
     }
-    const generatedCover = isOther && !cover ? await findOrCreateGeneratedCover(generatedCoverKey, videoPath) : "";
+    const generatedCover = !cover ? await findOrCreateGeneratedCover(generatedCoverKey, videoPath) : "";
     const displayCover = cover || generatedCover;
+    const generatedScreenshot = Boolean(generatedCover);
     const actresses = nfo.actresses?.length ? unique(nfo.actresses) : canonicalizeActresses(inferred.actresses, inferred.actresses);
+    const gallery = galleryForVideoPath(videoPath, imageLibrary.imageGalleries, Boolean(preferences.includeNestedGalleryFolders));
     const relParts = path.relative(MEDIA_ROOT, videoPath).split(path.sep);
-    const topFolder = relParts.length >= 3 ? path.join(MEDIA_ROOT, relParts[0]) : "";
+    const topFolder = relParts.length >= 2 ? path.join(MEDIA_ROOT, relParts[0]) : "";
     for (const actress of inferred.actresses) {
       if (topFolder && !actressFolderMap.has(actress)) actressFolderMap.set(actress, topFolder);
     }
@@ -396,6 +667,7 @@ async function scanLibrary() {
       studio: nfo.studio || inferred.studio || "",
       actresses,
       releaseDate: normalizeName(nfo.releaseDate || ""),
+      hasNfo: Boolean(nfo.hasNfo),
       videoPath,
       hostPath,
       fileSize: videoStat.size,
@@ -405,8 +677,32 @@ async function scanLibrary() {
       posterUrl: mediaUrl(poster),
       coverUrl: cover ? mediaUrl(cover) : configFileUrl(generatedCover),
       openUrl: "",
-      other: isOther
+      other: false,
+      generatedScreenshot,
+      sharedCoverScreenshot: false,
+      galleryKey: gallery?.key || ""
     });
+  }
+
+  const coverGroups = new Map();
+  for (const movie of movies) {
+    if (!movie.cover || movie.generatedScreenshot) continue;
+    const key = path.resolve(movie.cover);
+    if (!coverGroups.has(key)) coverGroups.set(key, []);
+    coverGroups.get(key).push(movie);
+  }
+  for (const group of coverGroups.values()) {
+    if (group.length < 2) continue;
+    for (const movie of group) {
+      const screenshotKey = `${movie.baseKey}|path:${normalizeStoredPath(movie.hostPath)}|shared-cover`;
+      const generatedCover = await findOrCreateGeneratedCover(screenshotKey, movie.videoPath);
+      if (!generatedCover) continue;
+      movie.cover = generatedCover;
+      movie.coverUrl = configFileUrl(generatedCover);
+      movie.generatedScreenshot = true;
+      movie.sharedCoverScreenshot = true;
+      movie.other = false;
+    }
   }
 
   const keyCounts = new Map();
@@ -418,6 +714,16 @@ async function scanLibrary() {
     addLegacyKeyMapping(legacyKeyMap, movie.legacyKey, movie.key);
     if (movie.baseKey !== movie.key) addLegacyKeyMapping(legacyKeyMap, movie.baseKey, movie.key);
   }
+  const movieKeysByGallery = new Map();
+  for (const movie of movies) {
+    if (!movie.galleryKey) continue;
+    if (!movieKeysByGallery.has(movie.galleryKey)) movieKeysByGallery.set(movie.galleryKey, []);
+    movieKeysByGallery.get(movie.galleryKey).push(movie.key);
+  }
+  for (const gallery of imageLibrary.imageGalleries) {
+    gallery.movieKeys = movieKeysByGallery.get(gallery.key) || [];
+  }
+  setScanProgress(78, "Updating metadata...");
   migrateLegacyMovieKeys(legacyKeyMap);
 
   const actressMap = new Map();
@@ -432,7 +738,16 @@ async function scanLibrary() {
     studioMap.get(studio).movies.push(movie.key);
   }
 
-  for (const actress of actressMap.values()) {
+  for (const imageActress of imageLibrary.imageActresses) {
+    if (!actressMap.has(imageActress.name)) actressMap.set(imageActress.name, { name: imageActress.name, movies: [], image: "", imageUrl: imageActress.imageUrl || "" });
+  }
+
+  const actresses = [...actressMap.values()];
+  const imageActressMap = new Map(imageLibrary.imageActresses.map((actress) => [actress.name, actress]));
+  let scannedPeople = 0;
+  for (const actress of actresses) {
+    scannedPeople += 1;
+    setScanProgress(82 + (actresses.length ? (scannedPeople / actresses.length) * 8 : 8), `Finding actress images (${scannedPeople}/${actresses.length})...`);
     const folderMatches = [...actressFolderMap.entries()]
       .filter(([folderActress]) => namesEquivalent(actress.name, folderActress))
       .map(([, dir]) => dir);
@@ -440,16 +755,28 @@ async function scanLibrary() {
       ...folderMatches,
       ...movies
       .filter((movie) => movie.actresses.some((name) => namesEquivalent(name, actress.name)))
-      .map((movie) => path.join(MEDIA_ROOT, path.relative(MEDIA_ROOT, movie.videoPath).split(path.sep)[0]))
+      .map((movie) => {
+        const relParts = path.relative(MEDIA_ROOT, movie.videoPath).split(path.sep);
+        return relParts.length >= 2 ? path.join(MEDIA_ROOT, relParts[0]) : "";
+      })
+      .filter(Boolean)
     ];
     for (const dir of unique(candidateDirs)) {
       actress.image = await findFirst(IMAGE_EXTS.map((ext) => path.join(dir, `folder${ext}`)));
       if (actress.image) break;
     }
-    actress.imageUrl = mediaUrl(actress.image);
+    actress.imageUrl = mediaUrl(actress.image) || actress.imageUrl || "";
     actress.movieCount = actress.movies.length;
+    const imageActress = imageActressMap.get(actress.name) || {};
+    actress.galleryCount = Number(imageActress.galleryCount || 0);
+    actress.imageCount = Number(imageActress.imageCount || 0);
+    actress.galleryFileSize = Number(imageActress.fileSize || 0);
+    actress.galleryFileSizeLabel = imageActress.fileSizeLabel || fileSizeLabel(0);
+    actress.totalFileSize = actress.movies.reduce((sum, key) => sum + Number(movies.find((movie) => movie.key === key)?.fileSize || 0), 0) + actress.galleryFileSize;
+    actress.totalFileSizeLabel = fileSizeLabel(actress.totalFileSize);
   }
 
+  setScanProgress(92, "Finding studio images...");
   for (const studio of studioMap.values()) {
     studio.image = await findStudioImage(studio.name);
     studio.imageUrl = configFileUrl(studio.image);
@@ -459,17 +786,26 @@ async function scanLibrary() {
   library = {
     scannedAt: new Date().toISOString(),
     movies,
-    actresses: [...actressMap.values()].sort((a, b) => a.name.localeCompare(b.name)),
+    actresses: actresses.sort((a, b) => a.name.localeCompare(b.name)),
     studios: [...studioMap.values()].sort((a, b) => a.name.localeCompare(b.name)),
-    otherVideos: movies.filter((movie) => movie.other).map((movie) => movie.key),
+    otherVideos: [],
+    images: imageLibrary.images,
+    imageGalleries: imageLibrary.imageGalleries,
+    imageActresses: imageLibrary.imageActresses,
     totals: {
       movies: movies.length,
       actresses: actressMap.size,
       studios: studioMap.size,
-      otherVideos: movies.filter((movie) => movie.other).length
+      otherVideos: 0,
+      images: imageLibrary.images.length,
+      imageGalleries: imageLibrary.imageGalleries.length,
+      imageActresses: imageLibrary.imageActresses.length
     }
   };
+  setScanProgress(97, "Saving scan results...");
   saveScanResults(library);
+  setScanProgress(100, "Scan complete.");
+  log("info", "Library scan complete", library.totals);
   return library;
 }
 
@@ -479,6 +815,8 @@ function publicLibrary() {
     movies: library.movies.map(({ videoPath, poster, cover, legacyKey, baseKey, ...movie }) => ({ ...movie, filePath: videoPath })),
     actresses: library.actresses.map(({ image, ...actress }) => actress),
     studios: library.studios.map(({ image, ...studio }) => studio),
+    images: library.images.map(({ filePath, ...image }) => image),
+    imageGalleries: library.imageGalleries.map(({ dir, ...gallery }) => gallery),
     userData: publicUserData(),
     preferences: publicPreferences(),
     playlists: publicPlaylists()
@@ -526,7 +864,9 @@ async function initDatabase() {
       cover_path TEXT,
       poster_url TEXT,
       cover_url TEXT,
-      other INTEGER NOT NULL DEFAULT 0
+      other INTEGER NOT NULL DEFAULT 0,
+      has_nfo INTEGER NOT NULL DEFAULT 0,
+      gallery_key TEXT
     );
     CREATE TABLE IF NOT EXISTS actresses (
       name TEXT PRIMARY KEY,
@@ -545,6 +885,51 @@ async function initDatabase() {
     );
     CREATE TABLE IF NOT EXISTS other_videos (
       movie_key TEXT PRIMARY KEY
+    );
+    CREATE TABLE IF NOT EXISTS image_galleries (
+      key TEXT PRIMARY KEY,
+      actress_name TEXT NOT NULL,
+      title TEXT NOT NULL,
+      folder_name TEXT NOT NULL,
+      gallery_path TEXT NOT NULL,
+      dir_path TEXT NOT NULL,
+      host_path TEXT,
+      images_json TEXT NOT NULL,
+      image_count INTEGER NOT NULL,
+      file_size INTEGER NOT NULL,
+      file_size_label TEXT NOT NULL,
+      cover_image_key TEXT,
+      poster_image_key TEXT,
+      cover_url TEXT,
+      poster_url TEXT,
+      movie_keys_json TEXT
+    );
+    CREATE TABLE IF NOT EXISTS gallery_images (
+      key TEXT PRIMARY KEY,
+      gallery_key TEXT NOT NULL,
+      actress_name TEXT NOT NULL,
+      title TEXT NOT NULL,
+      filename TEXT NOT NULL,
+      file_path TEXT NOT NULL,
+      host_path TEXT,
+      file_size INTEGER NOT NULL,
+      file_size_label TEXT NOT NULL,
+      width INTEGER,
+      height INTEGER,
+      image_url TEXT
+    );
+    CREATE TABLE IF NOT EXISTS image_actresses (
+      name TEXT PRIMARY KEY,
+      galleries_json TEXT NOT NULL,
+      gallery_count INTEGER NOT NULL,
+      image_count INTEGER NOT NULL,
+      file_size INTEGER NOT NULL,
+      file_size_label TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS gallery_art (
+      gallery_key TEXT PRIMARY KEY,
+      cover_image_key TEXT,
+      poster_image_key TEXT
     );
     CREATE TABLE IF NOT EXISTS favorites (
       type TEXT NOT NULL,
@@ -577,6 +962,15 @@ async function initDatabase() {
       migrated_at TEXT NOT NULL
     );
   `);
+  try {
+    db.prepare("ALTER TABLE movies ADD COLUMN gallery_key TEXT").run();
+  } catch {}
+  try {
+    db.prepare("ALTER TABLE movies ADD COLUMN has_nfo INTEGER NOT NULL DEFAULT 0").run();
+  } catch {}
+  try {
+    db.prepare("ALTER TABLE image_galleries ADD COLUMN movie_keys_json TEXT").run();
+  } catch {}
 }
 
 function dbHasMigration(name) {
@@ -611,14 +1005,18 @@ async function migrateJsonUserData() {
 }
 
 function loadUserData() {
-  userData = { favorites: { movies: {}, actresses: {}, studios: {} }, counters: { movies: {} } };
+  userData = { favorites: { movies: {}, actresses: {}, studios: {}, images: {}, galleries: {}, imageActresses: {} }, counters: { movies: {}, images: {} } };
   for (const row of db.prepare("SELECT type, key FROM favorites").all()) {
     if (row.type === "actress") userData.favorites.actresses[row.key] = true;
     else if (row.type === "studio") userData.favorites.studios[row.key] = true;
+    else if (row.type === "image") userData.favorites.images[row.key] = true;
+    else if (row.type === "gallery") userData.favorites.galleries[row.key] = true;
+    else if (row.type === "imageActress") userData.favorites.imageActresses[row.key] = true;
     else userData.favorites.movies[row.key] = true;
   }
   for (const row of db.prepare("SELECT movie_key, value FROM counters").all()) {
-    if (row.value > 0) userData.counters.movies[row.movie_key] = row.value;
+    if (row.value > 0 && String(row.movie_key).startsWith("image:")) userData.counters.images[row.movie_key] = row.value;
+    else if (row.value > 0) userData.counters.movies[row.movie_key] = row.value;
   }
 }
 
@@ -644,7 +1042,8 @@ function loadPlaylists() {
     filename: row.filename,
     favorite: Boolean(row.favorite),
     updatedAt: row.updated_at,
-    movieKeys: db.prepare("SELECT movie_key FROM playlist_items WHERE playlist_id = ? ORDER BY position").all(row.id).map((item) => item.movie_key),
+    movieKeys: db.prepare("SELECT movie_key FROM playlist_items WHERE playlist_id = ? ORDER BY position").all(row.id).map((item) => item.movie_key).filter((key) => !String(key).startsWith("image:")),
+    imageKeys: db.prepare("SELECT movie_key FROM playlist_items WHERE playlist_id = ? ORDER BY position").all(row.id).map((item) => item.movie_key).filter((key) => String(key).startsWith("image:")),
     filePath: path.join(PLAYLIST_ROOT, row.filename)
   })).sort((a, b) => Number(b.favorite) - Number(a.favorite) || a.name.localeCompare(b.name));
 }
@@ -688,23 +1087,34 @@ function uniqueMovieKeys(movieKeys = []) {
   return [...new Set(movieKeys.map(normalizeKey).filter((key) => valid.has(key)))];
 }
 
-async function writePlaylistFile(playlist, movieKeys) {
+function uniqueImageKeys(imageKeys = []) {
+  const valid = new Set(library.images.map((image) => image.key));
+  return [...new Set(imageKeys.map(normalizeKey).filter((key) => valid.has(key)))];
+}
+
+async function writePlaylistFile(playlist, movieKeys, imageKeys = []) {
   await mkdir(PLAYLIST_ROOT, { recursive: true });
   const moviesByKey = new Map(library.movies.map((movie) => [movie.key, movie]));
+  const imagesByKey = new Map(library.images.map((image) => [image.key, image]));
   const lines = ["#EXTM3U"];
   for (const key of movieKeys) {
     const movie = moviesByKey.get(key);
     if (!movie?.hostPath) continue;
     lines.push(`#EXTINF:-1,${movie.title || movie.id}`, movie.hostPath);
   }
+  for (const key of imageKeys) {
+    const image = imagesByKey.get(key);
+    if (!image?.hostPath) continue;
+    lines.push(`#EXTINF:-1,${image.title || image.filename}`, image.hostPath);
+  }
   await writeFile(path.join(PLAYLIST_ROOT, playlist.filename), `${lines.join("\n")}\n`);
 }
 
-async function openTemporaryPlaylist(name, movieKeys) {
+async function openTemporaryPlaylist(name, movieKeys = [], imageKeys = []) {
   const id = "temporary";
   const filename = playlistFileName(name || "temporary-playlist", id);
   const filePath = path.join(PLAYLIST_ROOT, filename);
-  await writePlaylistFile({ filename }, uniqueMovieKeys(movieKeys));
+  await writePlaylistFile({ filename }, uniqueMovieKeys(movieKeys), uniqueImageKeys(imageKeys));
   const opened = await openOnHost(filePath);
   return {
     path: filePath,
@@ -716,17 +1126,18 @@ async function openTemporaryPlaylist(name, movieKeys) {
   };
 }
 
-async function savePlaylist({ id = randomUUID(), name, movieKeys, favorite = false }) {
+async function savePlaylist({ id = randomUUID(), name, movieKeys = [], imageKeys = [], favorite = false }) {
   const cleanName = normalizeName(name) || defaultPlaylistName();
   const existing = db.prepare("SELECT filename FROM playlists WHERE id = ?").get(id);
   const filename = playlistFileName(cleanName, id);
   const updatedAt = new Date().toISOString();
   const keys = uniqueMovieKeys(movieKeys);
+  const images = uniqueImageKeys(imageKeys);
   db.prepare("INSERT OR REPLACE INTO playlists (id, name, filename, favorite, updated_at) VALUES (?, ?, ?, ?, ?)").run(id, cleanName, filename, favorite ? 1 : 0, updatedAt);
   db.prepare("DELETE FROM playlist_items WHERE playlist_id = ?").run(id);
   const itemStmt = db.prepare("INSERT INTO playlist_items (playlist_id, movie_key, position) VALUES (?, ?, ?)");
-  keys.forEach((key, index) => itemStmt.run(id, key, index));
-  await writePlaylistFile({ filename }, keys);
+  [...keys, ...images].forEach((key, index) => itemStmt.run(id, key, index));
+  await writePlaylistFile({ filename }, keys, images);
   if (existing?.filename && existing.filename !== filename) await unlink(path.join(PLAYLIST_ROOT, existing.filename)).catch(() => {});
   loadPlaylists();
   return publicPlaylists().find((playlist) => playlist.id === id);
@@ -761,6 +1172,158 @@ function migrateLegacyMovieKeys(legacyKeyMap) {
   loadUserData();
 }
 
+function parseJsonArray(value) {
+  try {
+    const parsed = JSON.parse(value || "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function loadScanResults() {
+  const meta = db.prepare("SELECT scanned_at FROM scan_meta WHERE id = 1").get();
+  if (!meta?.scanned_at) {
+    log("info", "No saved scan found; start the app and press Scan to build the library.");
+    library = { scannedAt: null, movies: [], actresses: [], studios: [], otherVideos: [], images: [], imageGalleries: [], imageActresses: [], totals: {}, userData: {}, preferences: {} };
+    return;
+  }
+  const movies = db.prepare("SELECT * FROM movies").all().map((row) => ({
+    key: row.key,
+    baseKey: row.key,
+    legacyKey: row.legacy_key || "",
+    id: row.id,
+    title: row.title,
+    studio: row.studio || "",
+    actresses: parseJsonArray(row.actresses_json),
+    releaseDate: row.release_date || "",
+    videoPath: row.video_path,
+    hostPath: row.host_path || "",
+    fileSize: Number(row.file_size || 0),
+    fileSizeLabel: row.file_size_label || fileSizeLabel(row.file_size || 0),
+    poster: row.poster_path || "",
+    cover: row.cover_path || "",
+    posterUrl: row.poster_url || "",
+    coverUrl: row.cover_url || "",
+    openUrl: `/api/open/${encodeURIComponent(row.key)}`,
+    other: false,
+    hasNfo: Boolean(row.has_nfo) || String(row.key || "").startsWith("nfo:"),
+    generatedScreenshot: Boolean(row.cover_path && path.resolve(row.cover_path).startsWith(OTHER_IMAGE_ROOT)),
+    sharedCoverScreenshot: false,
+    galleryKey: row.gallery_key || ""
+  }));
+  const movieByKey = new Map(movies.map((movie) => [movie.key, movie]));
+  const imageActresses = db.prepare("SELECT * FROM image_actresses").all().map((row) => ({
+    name: row.name,
+    galleries: parseJsonArray(row.galleries_json),
+    galleryCount: Number(row.gallery_count || 0),
+    imageCount: Number(row.image_count || 0),
+    fileSize: Number(row.file_size || 0),
+    fileSizeLabel: row.file_size_label || fileSizeLabel(row.file_size || 0)
+  }));
+  const imageActressMap = new Map(imageActresses.map((actress) => [actress.name, actress]));
+  const actresses = db.prepare("SELECT * FROM actresses").all().map((row) => {
+    const movieKeys = parseJsonArray(row.movies_json);
+    const imageActress = imageActressMap.get(row.name) || {};
+    const galleryFileSize = Number(imageActress.fileSize || 0);
+    const totalFileSize = movieKeys.reduce((sum, key) => sum + Number(movieByKey.get(key)?.fileSize || 0), 0) + galleryFileSize;
+    return {
+      name: row.name,
+      movies: movieKeys,
+      image: row.image_path || "",
+      imageUrl: row.image_url || imageActress.imageUrl || "",
+      movieCount: Number(row.movie_count || movieKeys.length),
+      galleryCount: Number(imageActress.galleryCount || 0),
+      imageCount: Number(imageActress.imageCount || 0),
+      galleryFileSize,
+      galleryFileSizeLabel: imageActress.fileSizeLabel || fileSizeLabel(0),
+      totalFileSize,
+      totalFileSizeLabel: fileSizeLabel(totalFileSize)
+    };
+  });
+  for (const imageActress of imageActresses) {
+    if (!actresses.some((actress) => namesEquivalent(actress.name, imageActress.name))) {
+      actresses.push({
+        name: imageActress.name,
+        movies: [],
+        image: "",
+        imageUrl: imageActress.imageUrl || "",
+        movieCount: 0,
+        galleryCount: Number(imageActress.galleryCount || 0),
+        imageCount: Number(imageActress.imageCount || 0),
+        galleryFileSize: Number(imageActress.fileSize || 0),
+        galleryFileSizeLabel: imageActress.fileSizeLabel || fileSizeLabel(0),
+        totalFileSize: Number(imageActress.fileSize || 0),
+        totalFileSizeLabel: imageActress.fileSizeLabel || fileSizeLabel(0)
+      });
+    }
+  }
+  for (const imageActress of imageActresses) {
+    imageActress.imageUrl = actresses.find((actress) => namesEquivalent(actress.name, imageActress.name))?.imageUrl || "";
+  }
+  const studios = db.prepare("SELECT * FROM studios").all().map((row) => ({
+    name: row.name,
+    slug: row.slug,
+    movies: parseJsonArray(row.movies_json),
+    image: row.image_path || "",
+    imageUrl: row.image_url || "",
+    movieCount: Number(row.movie_count || 0)
+  }));
+  const images = db.prepare("SELECT * FROM gallery_images").all().map((row) => ({
+    key: row.key,
+    galleryKey: row.gallery_key,
+    actressName: row.actress_name,
+    title: row.title,
+    filename: row.filename,
+    filePath: row.file_path,
+    hostPath: row.host_path || "",
+    fileSize: Number(row.file_size || 0),
+    fileSizeLabel: row.file_size_label || fileSizeLabel(row.file_size || 0),
+    width: Number(row.width || 0),
+    height: Number(row.height || 0),
+    imageUrl: row.image_url || "",
+    openUrl: `/api/images/open/${encodeURIComponent(row.key)}`
+  }));
+  const imageGalleries = db.prepare("SELECT * FROM image_galleries").all().map((row) => ({
+    key: row.key,
+    actressName: row.actress_name,
+    title: row.title,
+    folderName: row.folder_name,
+    path: row.gallery_path,
+    dir: row.dir_path,
+    hostPath: row.host_path || "",
+    images: parseJsonArray(row.images_json),
+    imageCount: Number(row.image_count || 0),
+    fileSize: Number(row.file_size || 0),
+    fileSizeLabel: row.file_size_label || fileSizeLabel(row.file_size || 0),
+    coverImageKey: row.cover_image_key || "",
+    posterImageKey: row.poster_image_key || "",
+    coverUrl: row.cover_url || "",
+    posterUrl: row.poster_url || "",
+    movieKeys: parseJsonArray(row.movie_keys_json)
+  }));
+  library = {
+    scannedAt: meta.scanned_at,
+    movies,
+    actresses: actresses.sort((a, b) => collatorCompare(a.name, b.name)),
+    studios: studios.sort((a, b) => collatorCompare(a.name, b.name)),
+    otherVideos: [],
+    images,
+    imageGalleries,
+    imageActresses,
+    totals: {
+      movies: movies.length,
+      actresses: actresses.length,
+      studios: studios.length,
+      otherVideos: 0,
+      images: images.length,
+      imageGalleries: imageGalleries.length,
+      imageActresses: imageActresses.length
+    }
+  };
+  log("info", "Loaded saved scan results", library.totals);
+}
+
 function saveScanResults(nextLibrary) {
   const tx = db.prepare("BEGIN");
   tx.run();
@@ -769,12 +1332,15 @@ function saveScanResults(nextLibrary) {
     db.prepare("DELETE FROM actresses").run();
     db.prepare("DELETE FROM studios").run();
     db.prepare("DELETE FROM other_videos").run();
+    db.prepare("DELETE FROM image_galleries").run();
+    db.prepare("DELETE FROM gallery_images").run();
+    db.prepare("DELETE FROM image_actresses").run();
     const movieStmt = db.prepare(`
-      INSERT INTO movies (key, legacy_key, id, title, studio, actresses_json, release_date, video_path, host_path, file_size, file_size_label, poster_path, cover_path, poster_url, cover_url, other)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO movies (key, legacy_key, id, title, studio, actresses_json, release_date, video_path, host_path, file_size, file_size_label, poster_path, cover_path, poster_url, cover_url, other, has_nfo, gallery_key)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     for (const movie of nextLibrary.movies) {
-      movieStmt.run(movie.key, movie.legacyKey, movie.id, movie.title, movie.studio, JSON.stringify(movie.actresses), movie.releaseDate, movie.videoPath, movie.hostPath, movie.fileSize, movie.fileSizeLabel, movie.poster, movie.cover, movie.posterUrl, movie.coverUrl, movie.other ? 1 : 0);
+      movieStmt.run(movie.key, movie.legacyKey, movie.id, movie.title, movie.studio, JSON.stringify(movie.actresses), movie.releaseDate, movie.videoPath, movie.hostPath, movie.fileSize, movie.fileSizeLabel, movie.poster, movie.cover, movie.posterUrl, movie.coverUrl, 0, movie.hasNfo ? 1 : 0, movie.galleryKey || "");
     }
     const actressStmt = db.prepare("INSERT INTO actresses (name, movies_json, image_path, image_url, movie_count) VALUES (?, ?, ?, ?, ?)");
     for (const actress of nextLibrary.actresses) {
@@ -784,8 +1350,24 @@ function saveScanResults(nextLibrary) {
     for (const studio of nextLibrary.studios) {
       studioStmt.run(studio.name, studio.slug, JSON.stringify(studio.movies), studio.image || "", studio.imageUrl || "", studio.movieCount);
     }
-    const otherStmt = db.prepare("INSERT INTO other_videos (movie_key) VALUES (?)");
-    for (const key of nextLibrary.otherVideos) otherStmt.run(key);
+    const imageStmt = db.prepare(`
+      INSERT INTO gallery_images (key, gallery_key, actress_name, title, filename, file_path, host_path, file_size, file_size_label, width, height, image_url)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const image of nextLibrary.images) {
+      imageStmt.run(image.key, image.galleryKey, image.actressName, image.title, image.filename, image.filePath, image.hostPath, image.fileSize, image.fileSizeLabel, image.width, image.height, image.imageUrl);
+    }
+    const galleryStmt = db.prepare(`
+      INSERT INTO image_galleries (key, actress_name, title, folder_name, gallery_path, dir_path, host_path, images_json, image_count, file_size, file_size_label, cover_image_key, poster_image_key, cover_url, poster_url, movie_keys_json)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const gallery of nextLibrary.imageGalleries) {
+      galleryStmt.run(gallery.key, gallery.actressName, gallery.title, gallery.folderName, gallery.path, gallery.dir, gallery.hostPath, JSON.stringify(gallery.images), gallery.imageCount, gallery.fileSize, gallery.fileSizeLabel, gallery.coverImageKey, gallery.posterImageKey, gallery.coverUrl, gallery.posterUrl, JSON.stringify(gallery.movieKeys || []));
+    }
+    const imageActressStmt = db.prepare("INSERT INTO image_actresses (name, galleries_json, gallery_count, image_count, file_size, file_size_label) VALUES (?, ?, ?, ?, ?, ?)");
+    for (const actress of nextLibrary.imageActresses) {
+      imageActressStmt.run(actress.name, JSON.stringify(actress.galleries), actress.galleryCount, actress.imageCount, actress.fileSize, actress.fileSizeLabel);
+    }
     db.prepare("INSERT OR REPLACE INTO scan_meta (id, scanned_at) VALUES (1, ?)").run(nextLibrary.scannedAt);
     db.prepare("COMMIT").run();
   } catch (error) {
@@ -803,6 +1385,7 @@ function contentType(filePath) {
     ".jpeg": "image/jpeg",
     ".png": "image/png",
     ".webp": "image/webp",
+    ".gif": "image/gif",
     ".m3u": "audio/x-mpegurl"
   }[path.extname(filePath).toLowerCase()] || "application/octet-stream";
 }
@@ -845,7 +1428,7 @@ function parseMultipartImage(req, body) {
     const filename = headers.match(/filename="([^"]+)"/i)?.[1] || "studio.jpg";
     const content = part.slice(splitAt + 4).replace(/\r\n--$/, "").replace(/\r\n$/, "");
     const ext = path.extname(filename).toLowerCase();
-    if (!IMAGE_EXTS.includes(ext)) throw new Error("Upload a jpg, png, or webp image");
+    if (!IMAGE_EXTS.includes(ext)) throw new Error("Upload a jpg, png, webp, or gif image");
     return { ext, bytes: Buffer.from(content, "latin1") };
   }
   throw new Error("Missing image file");
@@ -853,6 +1436,23 @@ function parseMultipartImage(req, body) {
 
 async function removeFolderImages(dir) {
   await Promise.all(IMAGE_EXTS.map((ext) => unlink(path.join(dir, `folder${ext}`)).catch(() => {})));
+}
+
+async function writeJpegFromImage(sourcePath, targetPath) {
+  const ext = path.extname(sourcePath).toLowerCase();
+  if (ext === ".jpg" || ext === ".jpeg") {
+    await writeFile(targetPath, await readFile(sourcePath));
+    return;
+  }
+  const ffmpeg = await ffmpegTool();
+  if (!ffmpeg) throw new Error("ffmpeg is required to convert this image to JPG.");
+  await execFileAsync(ffmpeg, [
+    "-y",
+    "-i", sourcePath,
+    "-frames:v", "1",
+    "-q:v", "2",
+    targetPath
+  ]);
 }
 
 async function removeStudioImages(slug) {
@@ -876,12 +1476,13 @@ async function handle(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
   if (url.pathname === "/api/library") return sendJson(res, publicLibrary());
   if (url.pathname === "/api/user-data") return sendJson(res, publicUserData());
+  if (url.pathname === "/api/scan-status") return sendJson(res, scanProgress);
   if (url.pathname === "/api/playlists") {
     if (req.method === "GET") return sendJson(res, publicPlaylists());
     if (req.method === "POST") {
       try {
         const body = JSON.parse((await readRequestBody(req, 1024 * 1024)).toString("utf8"));
-        const playlist = await savePlaylist({ name: body.name, movieKeys: body.movieKeys || [], favorite: Boolean(body.favorite) });
+        const playlist = await savePlaylist({ name: body.name, movieKeys: body.movieKeys || [], imageKeys: body.imageKeys || [], favorite: Boolean(body.favorite) });
         return sendJson(res, { playlist, playlists: publicPlaylists() });
       } catch (error) {
         return sendJson(res, { error: error.message }, 400);
@@ -891,7 +1492,7 @@ async function handle(req, res) {
   if (url.pathname === "/api/playlists/temporary/open" && req.method === "POST") {
     try {
       const body = JSON.parse((await readRequestBody(req, 1024 * 1024)).toString("utf8"));
-      return sendJson(res, await openTemporaryPlaylist(body.name, body.movieKeys || []));
+      return sendJson(res, await openTemporaryPlaylist(body.name, body.movieKeys || [], body.imageKeys || []));
     } catch (error) {
       return sendJson(res, { error: error.message }, 400);
     }
@@ -922,6 +1523,7 @@ async function handle(req, res) {
           id,
           name: body.name ?? existing.name,
           movieKeys: body.movieKeys || [],
+          imageKeys: body.imageKeys || [],
           favorite: Boolean(body.favorite)
         });
         return sendJson(res, { playlist, playlists: publicPlaylists() });
@@ -937,7 +1539,7 @@ async function handle(req, res) {
   if (url.pathname === "/api/favorite" && req.method === "POST") {
     try {
       const body = JSON.parse((await readRequestBody(req, 1024 * 1024)).toString("utf8"));
-      const type = ["actress", "studio"].includes(body.type) ? body.type : "movie";
+      const type = ["actress", "studio", "image", "gallery", "imageActress"].includes(body.type) ? body.type : "movie";
       const key = normalizeKey(body.key);
       if (!key) return sendJson(res, { error: "Missing favorite key" }, 400);
       setFavorite(type, key, Boolean(body.value));
@@ -952,7 +1554,8 @@ async function handle(req, res) {
       const key = normalizeKey(body.key);
       const delta = Number(body.delta || 0);
       if (!key) return sendJson(res, { error: "Missing counter key" }, 400);
-      const next = Math.max(0, Number(userData.counters.movies[key] || 0) + delta);
+      const current = String(key).startsWith("image:") ? userData.counters.images[key] : userData.counters.movies[key];
+      const next = Math.max(0, Number(current || 0) + delta);
       setCounter(key, next);
       return sendJson(res, publicUserData());
     } catch (error) {
@@ -975,6 +1578,7 @@ async function handle(req, res) {
       await scanLibrary();
       return sendJson(res, publicLibrary());
     } catch (error) {
+      scanProgress = { active: false, percent: 0, message: `Scan failed: ${error.message}` };
       return sendJson(res, { error: error.message }, 500);
     }
   }
@@ -985,10 +1589,12 @@ async function handle(req, res) {
       if (!studio) return sendJson(res, { error: "Studio not found" }, 404);
       const upload = parseMultipartImage(req, await readRequestBody(req));
       await mkdir(STUDIO_IMAGE_ROOT, { recursive: true });
-      const filePath = path.join(STUDIO_IMAGE_ROOT, `${studio.slug}${upload.ext}`);
+      const filePath = path.join(STUDIO_IMAGE_ROOT, `${studio.slug}.jpg`);
       await removeStudioImages(studio.slug);
       await writeFile(filePath, upload.bytes);
-      await scanLibrary();
+      studio.image = filePath;
+      studio.imageUrl = configFileUrl(filePath);
+      library.scannedAt = new Date().toISOString();
       return sendJson(res, publicLibrary());
     } catch (error) {
       return sendJson(res, { error: error.message }, 400);
@@ -1005,8 +1611,11 @@ async function handle(req, res) {
       if (!candidate) return sendJson(res, { error: "Actress folder not found" }, 404);
       const folder = path.join(MEDIA_ROOT, path.relative(MEDIA_ROOT, candidate.videoPath).split(path.sep)[0]);
       await removeFolderImages(folder);
-      await writeFile(path.join(folder, `folder${upload.ext}`), upload.bytes);
-      await scanLibrary();
+      const filePath = path.join(folder, "folder.jpg");
+      await writeFile(filePath, upload.bytes);
+      actress.image = filePath;
+      actress.imageUrl = mediaUrl(filePath);
+      library.scannedAt = new Date().toISOString();
       return sendJson(res, publicLibrary());
     } catch (error) {
       return sendJson(res, { error: error.message }, 400);
@@ -1027,8 +1636,87 @@ async function handle(req, res) {
         ? "Opened in the default app."
         : movie.hostPath
           ? "Browser security may block opening local files directly. The host path was copied."
-          : "Set HOST_PATH to map /media back to your host media folder."
+        : "Set HOST_PATH to map /media back to your host media folder."
     });
+  }
+  if (url.pathname.match(/^\/api\/movies\/[^/]+\/screenshot$/) && req.method === "POST") {
+    try {
+      const key = decodeURIComponent(url.pathname.split("/")[3]);
+      const movie = library.movies.find((item) => item.key === key || item.legacyKey === key);
+      if (!movie) return sendJson(res, { error: "Movie not found" }, 404);
+      if (!movie.generatedScreenshot) return sendJson(res, { error: "This movie does not use a generated screenshot." }, 400);
+      const screenshotKey = `${movie.baseKey || movie.key}|path:${normalizeStoredPath(movie.hostPath)}${movie.sharedCoverScreenshot ? "|shared-cover" : ""}`;
+      const generatedCover = await findOrCreateGeneratedCover(screenshotKey, movie.videoPath, true);
+      if (!generatedCover) return sendJson(res, { error: "Could not generate screenshot. Make sure ffmpeg is installed." }, 400);
+      movie.cover = generatedCover;
+      movie.coverUrl = configFileUrl(generatedCover);
+      movie.generatedScreenshot = true;
+      library.scannedAt = new Date().toISOString();
+      saveScanResults(library);
+      return sendJson(res, publicLibrary());
+    } catch (error) {
+      return sendJson(res, { error: error.message }, 400);
+    }
+  }
+  if (url.pathname.startsWith("/api/images/open/")) {
+    const key = decodeURIComponent(url.pathname.split("/").pop());
+    const image = library.images.find((item) => item.key === key);
+    if (!image) return sendJson(res, { error: "Image not found" }, 404);
+    const opened = await openOnHost(image.hostPath);
+    return sendJson(res, {
+      id: image.key,
+      hostPath: image.hostPath,
+      fileUrl: image.hostPath ? `file://${encodeURI(image.hostPath)}` : "",
+      opened,
+      message: opened
+        ? "Opened in the default app."
+        : image.hostPath
+          ? "Browser security may block opening local files directly. The host path was copied."
+        : "Set HOST_PATH to map /media back to your host media folder."
+    });
+  }
+  if (url.pathname.match(/^\/api\/images\/[^/]+\/actress-image$/) && req.method === "POST") {
+    try {
+      const key = decodeURIComponent(url.pathname.split("/")[3]);
+      const image = library.images.find((item) => item.key === key);
+      if (!image) return sendJson(res, { error: "Image not found" }, 404);
+      if (image.height && image.width && image.height <= image.width) return sendJson(res, { error: "Only portrait images can be used as actress images." }, 400);
+      const relParts = path.relative(MEDIA_ROOT, image.filePath).split(path.sep);
+      const folder = path.join(MEDIA_ROOT, relParts[0] || "");
+      if (!folder.startsWith(MEDIA_ROOT)) return sendJson(res, { error: "Actress folder not found" }, 404);
+      await removeFolderImages(folder);
+      const filePath = path.join(folder, "folder.jpg");
+      await writeJpegFromImage(image.filePath, filePath);
+      const actress = library.actresses.find((item) => item.name === image.actressName);
+      if (actress) {
+        actress.image = filePath;
+        actress.imageUrl = mediaUrl(filePath);
+      }
+      const imageActress = library.imageActresses.find((item) => item.name === image.actressName);
+      if (imageActress) imageActress.imageUrl = mediaUrl(filePath);
+      library.scannedAt = new Date().toISOString();
+      return sendJson(res, publicLibrary());
+    } catch (error) {
+      return sendJson(res, { error: error.message }, 400);
+    }
+  }
+  if (url.pathname.match(/^\/api\/galleries\/[^/]+\/art$/) && req.method === "POST") {
+    try {
+      const key = decodeURIComponent(url.pathname.split("/")[3]);
+      const gallery = library.imageGalleries.find((item) => item.key === key);
+      if (!gallery) return sendJson(res, { error: "Gallery not found" }, 404);
+      const body = JSON.parse((await readRequestBody(req, 1024 * 1024)).toString("utf8"));
+      const imageKey = normalizeKey(body.imageKey);
+      if (!gallery.images.includes(imageKey)) return sendJson(res, { error: "Image is not in this gallery" }, 400);
+      const current = db.prepare("SELECT cover_image_key, poster_image_key FROM gallery_art WHERE gallery_key = ?").get(key) || {};
+      const cover = body.kind === "cover" ? imageKey : current.cover_image_key || "";
+      const poster = body.kind === "poster" ? imageKey : current.poster_image_key || "";
+      db.prepare("INSERT OR REPLACE INTO gallery_art (gallery_key, cover_image_key, poster_image_key) VALUES (?, ?, ?)").run(key, cover, poster);
+      await scanLibrary();
+      return sendJson(res, publicLibrary());
+    } catch (error) {
+      return sendJson(res, { error: error.message }, 400);
+    }
   }
   if (url.pathname.startsWith("/media-file/")) {
     const filePath = fromRouteId(url.pathname.split("/").pop());
@@ -1064,10 +1752,11 @@ await migrateJsonUserData();
 loadUserData();
 loadPreferences();
 loadPlaylists();
-await scanLibrary().catch((error) => console.error(`Initial scan failed: ${error.message}`));
+loadScanResults();
 
 http.createServer((req, res) => {
   handle(req, res).catch((error) => sendJson(res, { error: error.message }, 500));
 }).listen(PORT, () => {
-  console.log(`javbrowser listening on http://localhost:${PORT}`);
+  log("info", `javbrowser listening on http://localhost:${PORT}`);
+  if (CURRENT_LOG_LEVEL > LOG_LEVELS.silent && CURRENT_LOG_LEVEL < LOG_LEVELS.info) console.log(`javbrowser listening on http://localhost:${PORT}`);
 });
