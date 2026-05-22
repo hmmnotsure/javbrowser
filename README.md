@@ -6,6 +6,10 @@ It is also a smaller alternative to [stashapp/stash](https://github.com/stashapp
 
 I made it because I wanted a simpler browser that displayed my covers better and could make playlists without turning the whole thing into a larger media-server project.
 
+<a href="https://ko-fi.com/yeahnoforsure_" target="_blank" rel="noopener noreferrer">
+  <img src="docs/support-me-on-kofi.png" alt="Support me on Ko-fi" width="360">
+</a>
+
 ![javbrowser screenshot](docs/javbrowser.jpg)
 
 ## Disclaimer
