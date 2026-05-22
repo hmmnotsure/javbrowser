@@ -1,8 +1,10 @@
 let state = {
   library: null,
-  view: "covers",
+  view: "movies",
+  movieMode: "covers",
   movieSort: "releaseDate",
   peopleSort: "name",
+  studioSort: "name",
   imageActressSort: "name",
   minimal: false,
   wallShowIds: false,
@@ -19,10 +21,18 @@ let state = {
   currentMovieGallery: "",
   galleryMoviesMode: "covers",
   imageMode: "covers",
+  imagesViewAll: false,
+  allImagesRenderCount: 120,
+  searchFilter: "all",
+  searchIndex: [],
+  searchResults: [],
+  searchActiveIndex: 0,
   imageOrientationFilters: { landscape: true, portrait: true },
+  allImageOrientationFilters: { landscape: true, portrait: true },
   imageSort: "title",
   gallerySort: "title",
   includeNestedGalleryFolders: false,
+  listingToggleStates: {},
   selectedMovieKeys: new Set(),
   selectedPersonKeys: [],
   selectedImageKeys: new Set(),
@@ -49,6 +59,7 @@ let state = {
   slideshowTimer: 0,
   navVisibility: {},
   pendingScrollMovieKey: "",
+  pendingScrollImageKey: "",
   detailKey: "",
   posterSize: 180,
   coverSize: 280,
@@ -71,7 +82,8 @@ const statusScan = document.querySelector("#statusScan");
 const scanProgress = document.querySelector("#scanProgress");
 const scanProgressBar = document.querySelector("#scanProgressBar");
 const sortSelect = document.querySelector("#sortSelect");
-const viewArtworkGroup = document.querySelector("#viewCovers").closest(".segmented");
+const listingModeGroup = document.querySelector("#listingModeGroup");
+const viewArtworkGroup = document.querySelector("#viewArtworkGroup");
 const favoritesFilterBtn = document.querySelector("#favoritesFilterBtn");
 const gridPlayBtn = document.querySelector("#gridPlayBtn");
 const playlistCreateBtn = document.querySelector("#playlistCreateBtn");
@@ -101,17 +113,27 @@ const slideshowSeconds = document.querySelector("#slideshowSeconds");
 const setGalleryCoverBtn = document.querySelector("#setGalleryCoverBtn");
 const setGalleryPosterBtn = document.querySelector("#setGalleryPosterBtn");
 const setActressImageBtn = document.querySelector("#setActressImageBtn");
+const lightboxMoreMenu = document.querySelector("#lightboxMoreMenu");
+const lightboxMoreActions = document.querySelector("#lightboxMoreActions");
 const toast = document.querySelector("#toast");
 const themeSelect = document.querySelector("#themeSelect");
 const backBtn = document.querySelector("#backBtn");
+const searchBtn = document.querySelector("#searchBtn");
+const searchModal = document.querySelector("#searchModal");
+const searchInput = document.querySelector("#searchInput");
+const searchResults = document.querySelector("#searchResults");
+const searchTabs = document.querySelector("#searchTabs");
 const scrollTopBtn = document.querySelector("#scrollTopBtn");
 const settingsBtn = document.querySelector("#settingsBtn");
 const navSettings = document.querySelector("#navSettings");
 const nestedGalleryToggle = document.querySelector("#nestedGalleryToggle");
+const viewAllImagesBtn = document.querySelector("#viewAllImagesBtn");
+const allImagesOrientationGroup = document.querySelector("#allImagesOrientationGroup");
+const allImagesLandscapeBtn = document.querySelector("#allImagesLandscapeBtn");
+const allImagesPortraitBtn = document.querySelector("#allImagesPortraitBtn");
 const collator = new Intl.Collator(undefined, { sensitivity: "base", numeric: true });
 const NAV_ITEMS = [
-  ["covers", "Covers"],
-  ["posters", "Posters"],
+  ["movies", "Movies"],
   ["actresses", "Actresses"],
   ["studios", "Studios"],
   ["images", "Images"]
@@ -159,9 +181,11 @@ function applySizing() {
 }
 
 function imageSizeKind() {
-  if (state.view === "covers") return "cover";
+  if (state.view === "movies") return state.movieMode === "covers" ? "cover" : "poster";
   if (state.view === "galleryMovies") return state.galleryMoviesMode === "covers" ? "cover" : "poster";
+  if (state.view === "images" && state.imagesViewAll) return "poster";
   if (state.view === "actresses" || state.view === "studios" || state.view === "images") return "person";
+  if (state.view === "actress" && state.currentActressSection === "images") return state.imageMode === "covers" ? "cover" : "poster";
   if (state.view === "actress") return state.currentActressMode === "covers" ? "cover" : "poster";
   if (state.view === "studio") return state.currentStudioMode === "covers" ? "cover" : "poster";
   if (state.view === "imageActress") return state.imageMode === "covers" ? "cover" : "poster";
@@ -200,10 +224,11 @@ function setCurrentImageSize(value) {
 }
 
 function updateGalleryImageRows() {
-  if (state.view !== "imageGallery") return false;
+  if (!(state.view === "imageGallery" || (state.view === "images" && state.imagesViewAll))) return false;
   const gallery = state.library.imageGalleries.find((item) => item.key === state.currentImageGallery);
-  if (!gallery) return false;
-  const visible = visibleGalleryImages(sortedImages(imagesByKeys(gallery.images || [])));
+  const visible = state.view === "imageGallery"
+    ? visibleGalleryImages(sortedImages(imagesByKeys(gallery?.images || [])))
+    : allImagesForView().slice(0, state.allImagesRenderCount);
   const grid = app.querySelector(".image-grid");
   if (!grid) return false;
   grid.innerHTML = imageRows(visible).map((row) => `
@@ -217,6 +242,7 @@ function updateGalleryImageRows() {
 function snapshotView() {
   return {
     view: state.view,
+    movieMode: state.movieMode,
     currentActress: state.currentActress,
     currentActressMode: state.currentActressMode,
     currentActressSection: state.currentActressSection,
@@ -224,12 +250,16 @@ function snapshotView() {
     currentStudioMode: state.currentStudioMode,
     currentImageActress: state.currentImageActress,
     currentImageGallery: state.currentImageGallery,
-    currentMovieGallery: state.currentMovieGallery,
-    galleryMoviesMode: state.galleryMoviesMode,
-    imageMode: state.imageMode,
-    imageOrientationFilters: { ...state.imageOrientationFilters },
+  currentMovieGallery: state.currentMovieGallery,
+  galleryMoviesMode: state.galleryMoviesMode,
+  imageMode: state.imageMode,
+  imagesViewAll: state.imagesViewAll,
+  imageOrientationFilters: { ...state.imageOrientationFilters },
+  allImageOrientationFilters: { ...state.allImageOrientationFilters },
+  listingToggleStates: JSON.parse(JSON.stringify(state.listingToggleStates || {})),
     movieSort: state.movieSort,
     peopleSort: state.peopleSort,
+    studioSort: state.studioSort,
     imageActressSort: state.imageActressSort,
     imageSort: state.imageSort,
     gallerySort: state.gallerySort,
@@ -238,6 +268,7 @@ function snapshotView() {
     wallShowIds: state.wallShowIds,
     hideMissingImages: state.hideMissingImages,
     hideNoNfoMovies: state.hideNoNfoMovies,
+    pendingScrollImageKey: state.pendingScrollImageKey,
     scrollY: window.scrollY
   };
 }
@@ -268,6 +299,8 @@ function restoreLocalUiState() {
     restoreRandomRanks(payload.randomRanks);
     const { scrollY, ...viewState } = payload.snapshot;
     Object.assign(state, viewState);
+    normalizeViewState();
+    applyListingToggleState();
     return Number(scrollY || 0);
   } catch {
     // Local UI state is best-effort only.
@@ -279,6 +312,8 @@ function restoreViewSnapshot(snapshot) {
   const scrollY = Number(snapshot?.scrollY || 0);
   const { scrollY: _scrollY, ...viewState } = snapshot;
   Object.assign(state, viewState);
+  normalizeViewState();
+  applyListingToggleState();
   render();
   requestAnimationFrame(() => window.scrollTo({ top: scrollY }));
   setTimeout(() => window.scrollTo({ top: scrollY }), 120);
@@ -289,8 +324,49 @@ function goTo(next, push = true) {
   if (state.view === "playlist" && next.view !== "playlist" && !canLeavePlaylistEdits()) return;
   if (push) state.history.push(snapshotView());
   Object.assign(state, next);
+  normalizeViewState();
+  applyListingToggleState();
   persistViewState();
   render();
+  saveLocalUiState();
+}
+
+function normalizeViewState() {
+  if (state.view === "covers" || state.view === "posters") {
+    state.movieMode = state.view;
+    state.view = "movies";
+  }
+}
+
+function listingToggleKey() {
+  if (state.view === "images") return state.imagesViewAll ? "images-all" : "images-actresses";
+  if (state.view === "imageGallery") return "image-gallery";
+  if (state.view === "imageActress") return "image-galleries";
+  if (state.view === "actress") return state.currentActressSection === "images" ? "actress-galleries" : "actress-movies";
+  if (state.view === "studio") return "studio-movies";
+  if (state.view === "galleryMovies") return "gallery-movies";
+  if (state.view === "playlist") return "playlist";
+  return state.view;
+}
+
+function applyListingToggleState() {
+  const saved = state.listingToggleStates?.[listingToggleKey()];
+  if (!saved) return;
+  if (typeof saved.imageWall === "boolean") state.minimal = saved.imageWall;
+  if (typeof saved.hideMissingImages === "boolean") state.hideMissingImages = saved.hideMissingImages;
+}
+
+function saveCurrentListingToggleState() {
+  const key = listingToggleKey();
+  state.listingToggleStates = {
+    ...(state.listingToggleStates || {}),
+    [key]: {
+      ...(state.listingToggleStates?.[key] || {}),
+      imageWall: state.minimal,
+      hideMissingImages: state.hideMissingImages
+    }
+  };
+  savePreference("listingToggleStates", state.listingToggleStates);
   saveLocalUiState();
 }
 
@@ -304,7 +380,9 @@ async function fetchJson(url, options) {
 async function loadLibrary() {
   state.library = await fetchJson("/api/library");
   applyPreferences(state.library.preferences || {});
+  buildSearchIndex();
   const scrollY = restoreLocalUiState();
+  applyListingToggleState();
   render();
   if (scrollY) {
     requestAnimationFrame(() => window.scrollTo({ top: scrollY }));
@@ -332,6 +410,7 @@ async function scanLibrary() {
   }, 300);
   try {
     state.library = await fetchJson("/api/scan", { method: "POST" });
+    buildSearchIndex();
     scanProgressBar.style.width = "100%";
     resetRandomRanks();
     showToast("Scan complete.");
@@ -466,8 +545,16 @@ function studioFavorite(name) {
   return Boolean(state.library?.userData?.favorites?.studios?.[name]);
 }
 
+function comparableName(value) {
+  return String(value || "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function namesEquivalent(a, b) {
+  return comparableName(a) === comparableName(b);
+}
+
 function imageActressForName(name) {
-  return state.library.imageActresses.find((item) => item.name === name) || null;
+  return state.library.imageActresses.find((item) => namesEquivalent(item.name, name)) || null;
 }
 
 function actressGalleryStats(name) {
@@ -557,6 +644,7 @@ function sortedImages(images) {
   const sort = state.imageSort;
   if (sort === "random") return byRandomRank(images, "images", (image) => image.key);
   return [...images].sort((a, b) => {
+    if (sort === "actress") return collator.compare(a.actressName || "", b.actressName || "") || collator.compare(a.hostPath || a.filename, b.hostPath || b.filename);
     if (sort === "fileSize") return b.fileSize - a.fileSize || collator.compare(a.title, b.title);
     return collator.compare(a.title || a.filename, b.title || b.filename);
   });
@@ -570,7 +658,7 @@ function imageOrientation(image) {
 
 function visibleGalleryImages(images) {
   let visible = state.favoritesOnly ? images.filter((image) => imageFavorite(image.key)) : images;
-  const { landscape, portrait } = state.imageOrientationFilters;
+  const { landscape, portrait } = currentImageOrientationFilters();
   if (!landscape && !portrait) return [];
   if (landscape || portrait) {
     visible = visible.filter((image) => {
@@ -579,6 +667,10 @@ function visibleGalleryImages(images) {
     });
   }
   return visible;
+}
+
+function currentImageOrientationFilters() {
+  return state.view === "images" && state.imagesViewAll ? state.allImageOrientationFilters : state.imageOrientationFilters;
 }
 
 function imageAspect(image) {
@@ -626,6 +718,29 @@ function imageRows(images) {
   });
 }
 
+function fitCardRows(items, requestedSize, aspectRatio) {
+  const width = galleryLayoutWidth();
+  const gap = 16;
+  const minCard = Math.max(120, Number(requestedSize || 180));
+  const columns = Math.max(1, Math.floor((width + gap) / (minCard + gap)));
+  const cardWidth = Math.max(120, Math.floor((width - gap * (columns - 1)) / columns));
+  const rows = [];
+  for (let index = 0; index < items.length; index += columns) {
+    rows.push({
+      items: items.slice(index, index + columns),
+      cardWidth,
+      imageHeight: Math.max(96, Math.round(cardWidth / aspectRatio))
+    });
+  }
+  return rows;
+}
+
+function galleryRows(galleries) {
+  const size = state.imageMode === "covers" ? state.coverSize : state.posterSize;
+  const aspect = state.imageMode === "covers" ? 16 / 11 : 2 / 3;
+  return fitCardRows(galleries, size, aspect);
+}
+
 function sortedGalleries(galleries) {
   const sort = state.gallerySort;
   if (sort === "random") return byRandomRank(galleries, "galleries", (gallery) => gallery.key);
@@ -661,15 +776,33 @@ function newestReleaseForPerson(person) {
 }
 
 function sortedPeople(items) {
-  const sort = state.peopleSort;
+  const sort = state.view === "studios" ? state.studioSort : state.peopleSort;
   const sorted = sort === "random" ? byRandomRank(items, "people", (item) => item.name) : [...items].sort((a, b) => {
     if (sort === "counter") return personCounterTotal(b) - personCounterTotal(a) || collator.compare(a.name, b.name);
     if (sort === "favorites") return personFavoriteMovieTotal(b) - personFavoriteMovieTotal(a) || collator.compare(a.name, b.name);
+    if (sort === "fileSize") return personTotalFileSize(b) - personTotalFileSize(a) || collator.compare(a.name, b.name);
+    if (sort === "galleryCount") return personGalleryStats(b).galleryCount - personGalleryStats(a).galleryCount || collator.compare(a.name, b.name);
+    if (sort === "imageCount") return personGalleryStats(b).imageCount - personGalleryStats(a).imageCount || collator.compare(a.name, b.name);
     if (sort === "newestRelease") return newestReleaseForPerson(b).localeCompare(newestReleaseForPerson(a)) || collator.compare(a.name, b.name);
     if (sort === "movieCount") return b.movieCount - a.movieCount || collator.compare(a.name, b.name);
     return collator.compare(a.name, b.name);
   });
   return sorted.sort((a, b) => Number(a.name === NO_ACTRESS) - Number(b.name === NO_ACTRESS));
+}
+
+function personGalleryStats(person) {
+  if (state.view !== "actresses") return { galleryCount: 0, imageCount: 0, fileSize: 0 };
+  return {
+    galleryCount: Number(person.galleryCount ?? actressGalleryStats(person.name).galleryCount ?? 0),
+    imageCount: Number(person.imageCount ?? actressGalleryStats(person.name).imageCount ?? 0),
+    fileSize: Number(person.galleryFileSize ?? actressGalleryStats(person.name).fileSize ?? 0)
+  };
+}
+
+function personTotalFileSize(person) {
+  if (Number.isFinite(Number(person.totalFileSize))) return Number(person.totalFileSize);
+  const movieSize = moviesByKeys(person.movies || []).reduce((sum, movie) => sum + Number(movie.fileSize || 0), 0);
+  return movieSize + Number(person.galleryFileSize || 0);
 }
 
 function byRandomRank(items, bucket, keyForItem) {
@@ -747,7 +880,7 @@ function selectedPlaylistImageKeys() {
     keys.push(...galleryImageKeysInTitleOrder(gallery));
   }
   for (const name of state.selectedImageActressKeys) {
-    const actress = state.library.imageActresses.find((item) => item.name === name);
+    const actress = imageActressForName(name);
     keys.push(...imageActressImageKeysByPath(actress));
   }
   return uniqueValues(keys);
@@ -802,7 +935,7 @@ function selectedImageActressImageKeysInPlaybackOrder() {
     }
   }
   for (const name of state.selectedImageActressKeys) {
-    const actress = state.library.imageActresses.find((item) => item.name === name);
+    const actress = imageActressForName(name);
     keys.push(...imageActressImageKeysByPath(actress));
   }
   return uniqueValues(keys);
@@ -845,8 +978,7 @@ function movieHasNfo(movie) {
 }
 
 function canHideNoNfoMovies() {
-  return state.view === "covers"
-    || state.view === "posters"
+  return state.view === "movies"
     || state.view === "studio"
     || state.view === "playlist"
     || (state.view === "actress" && state.currentActressSection !== "images");
@@ -871,6 +1003,20 @@ function updateChrome() {
   hideNoNfoToggle.checked = state.hideNoNfoMovies;
   if (nestedGalleryToggle) nestedGalleryToggle.checked = state.includeNestedGalleryFolders;
   updateOptionsMenu();
+  const listingModeRelevant = state.view === "movies";
+  listingModeGroup.hidden = !listingModeRelevant;
+  listingModeGroup.style.display = listingModeRelevant ? "" : "none";
+  document.querySelector("#listingCovers").classList.toggle("active", state.movieMode === "covers");
+  document.querySelector("#listingPosters").classList.toggle("active", state.movieMode === "posters");
+  const viewAllRelevant = state.view === "images";
+  viewAllImagesBtn.hidden = !viewAllRelevant;
+  viewAllImagesBtn.style.display = viewAllRelevant ? "" : "none";
+  viewAllImagesBtn.classList.toggle("active", state.imagesViewAll);
+  allImagesOrientationGroup.hidden = !(viewAllRelevant && state.imagesViewAll);
+  allImagesOrientationGroup.style.display = viewAllRelevant && state.imagesViewAll ? "" : "none";
+  const orientationFilters = currentImageOrientationFilters();
+  allImagesLandscapeBtn.classList.toggle("active", orientationFilters.landscape);
+  allImagesPortraitBtn.classList.toggle("active", orientationFilters.portrait);
   const hideArtworkGroup = state.view === "imageGallery"
     || state.view === "images"
     || state.view === "imageActress"
@@ -878,7 +1024,7 @@ function updateChrome() {
     || isPeopleView();
   viewArtworkGroup.hidden = hideArtworkGroup;
   viewArtworkGroup.style.display = hideArtworkGroup ? "none" : "";
-  favoritesFilterBtn.hidden = !(isMainMovieView() || isPeopleView() || state.view === "studio" || state.view === "imageGallery" || state.view === "imageActress");
+  favoritesFilterBtn.hidden = !(isMainMovieView() || isPeopleView() || state.view === "studio" || state.view === "imageGallery" || state.view === "imageActress" || (state.view === "images" && state.imagesViewAll));
   favoritesFilterBtn.classList.toggle("active", state.favoritesOnly);
   favoritesFilterBtn.textContent = state.favoritesOnly ? "♥" : "♡";
   const sizeRange = imageSizeRange();
@@ -946,10 +1092,15 @@ function updatePlaylistControls() {
 }
 
 function applyPreferences(preferences) {
-  const allowedViews = new Set(["covers", "posters", "actresses", "studios", "images"]);
-  if (allowedViews.has(preferences.currentMainView)) state.view = preferences.currentMainView;
+  const allowedViews = new Set(["movies", "actresses", "studios", "images"]);
+  if (preferences.currentMainView === "covers" || preferences.currentMainView === "posters") {
+    state.view = "movies";
+    state.movieMode = preferences.currentMainView;
+  } else if (allowedViews.has(preferences.currentMainView)) state.view = preferences.currentMainView;
+  if (["covers", "posters"].includes(preferences.movieMode)) state.movieMode = preferences.movieMode;
   if (typeof preferences.movieSort === "string") state.movieSort = preferences.movieSort;
   if (typeof preferences.peopleSort === "string") state.peopleSort = preferences.peopleSort;
+  if (typeof preferences.studioSort === "string") state.studioSort = preferences.studioSort;
   if (typeof preferences.imageActressSort === "string") state.imageActressSort = preferences.imageActressSort;
   if (typeof preferences.imageSort === "string") state.imageSort = preferences.imageSort;
   if (typeof preferences.gallerySort === "string") state.gallerySort = preferences.gallerySort;
@@ -957,6 +1108,19 @@ function applyPreferences(preferences) {
   if (typeof preferences.showIds === "boolean") state.wallShowIds = preferences.showIds;
   if (typeof preferences.hideMissingImages === "boolean") state.hideMissingImages = preferences.hideMissingImages;
   if (typeof preferences.hideNoNfoMovies === "boolean") state.hideNoNfoMovies = preferences.hideNoNfoMovies;
+  if (preferences.imageOrientationFilters && typeof preferences.imageOrientationFilters === "object") {
+    state.imageOrientationFilters = {
+      landscape: typeof preferences.imageOrientationFilters.landscape === "boolean" ? preferences.imageOrientationFilters.landscape : true,
+      portrait: typeof preferences.imageOrientationFilters.portrait === "boolean" ? preferences.imageOrientationFilters.portrait : true
+    };
+  }
+  if (preferences.allImageOrientationFilters && typeof preferences.allImageOrientationFilters === "object") {
+    state.allImageOrientationFilters = {
+      landscape: typeof preferences.allImageOrientationFilters.landscape === "boolean" ? preferences.allImageOrientationFilters.landscape : true,
+      portrait: typeof preferences.allImageOrientationFilters.portrait === "boolean" ? preferences.allImageOrientationFilters.portrait : true
+    };
+  }
+  if (preferences.listingToggleStates && typeof preferences.listingToggleStates === "object") state.listingToggleStates = preferences.listingToggleStates;
   if (typeof preferences.includeNestedGalleryFolders === "boolean") state.includeNestedGalleryFolders = preferences.includeNestedGalleryFolders;
   if (preferences.navVisibility && typeof preferences.navVisibility === "object") state.navVisibility = preferences.navVisibility;
   if (Number.isFinite(Number(preferences.slideshowSeconds))) state.slideshowSeconds = Math.max(1, Number(preferences.slideshowSeconds));
@@ -985,43 +1149,64 @@ function savePreference(key, value) {
 }
 
 function persistViewState() {
-  if (["covers", "posters", "actresses", "studios", "images"].includes(state.view)) {
+  if (["movies", "actresses", "studios", "images"].includes(state.view)) {
     savePreference("currentMainView", state.view);
   }
+  savePreference("movieMode", state.movieMode);
 }
 
 function sortOptionsForView() {
+  if (state.view === "images" && state.imagesViewAll) {
+    return [
+      ["actress", "Actress"],
+      ["fileSize", "File size"],
+      ["random", "Random"]
+    ];
+  }
   if (state.view === "images") {
     return [
       ["name", "Actress"],
-      ["fileSize", "File Size"],
+      ["fileSize", "File size"],
       ["galleryCount", "Number of galleries"],
-      ["imageCount", "Number of photos"],
+      ["imageCount", "Number of images"],
       ["random", "Random"]
     ];
   }
   if (state.view === "imageGallery") {
     return [
-      ["fileSize", "File Size"],
+      ["fileSize", "File size"],
       ["random", "Random"],
       ["title", "Title"]
     ];
   }
   if (state.view === "imageActress" || (state.view === "actress" && state.currentActressSection === "images")) {
     return [
-      ["fileSize", "File Size"],
+      ["fileSize", "File size"],
       ["imageCount", "Number of images"],
       ["path", "Path"],
       ["random", "Random"],
       ["title", "Title"]
     ];
   }
-  if (isPeopleView()) {
+  if (state.view === "actresses") {
+    return [
+      ["counter", "Counter"],
+      ["favorites", "Favorites"],
+      ["fileSize", "File size"],
+      ["galleryCount", "Number of galleries"],
+      ["imageCount", "Number of images"],
+      ["name", "Name"],
+      ["newestRelease", "Release date"],
+      ["movieCount", "Number of movies"],
+      ["random", "Random"]
+    ];
+  }
+  if (state.view === "studios") {
     return [
       ["counter", "Counter"],
       ["favorites", "Favorites"],
       ["name", "Name"],
-      ["newestRelease", "Release Date"],
+      ["newestRelease", "Release date"],
       ["movieCount", "Number of movies"],
       ["random", "Random"]
     ];
@@ -1029,9 +1214,9 @@ function sortOptionsForView() {
   return [
     ["actress", "Actress"],
     ["counter", "Counter"],
-    ["fileSize", "File Size"],
+    ["fileSize", "File size"],
     ["random", "Random"],
-    ["releaseDate", "Release Date"],
+    ["releaseDate", "Release date"],
     ["title", "Title"]
   ];
 }
@@ -1041,15 +1226,16 @@ function isPeopleView() {
 }
 
 function isMainMovieView() {
-  return state.view === "covers" || state.view === "posters" || state.view === "galleryMovies";
+  return state.view === "movies" || state.view === "galleryMovies";
 }
 
 function currentSortValue() {
   const values = sortOptionsForView().map(([value]) => value);
-  const key = state.view === "images" ? "imageActressSort" : state.view === "imageGallery" ? "imageSort" : (state.view === "imageActress" || (state.view === "actress" && state.currentActressSection === "images")) ? "gallerySort" : isPeopleView() ? "peopleSort" : "movieSort";
+  const key = state.view === "images" && state.imagesViewAll ? "imageSort" : state.view === "images" ? "imageActressSort" : state.view === "imageGallery" ? "imageSort" : (state.view === "imageActress" || (state.view === "actress" && state.currentActressSection === "images")) ? "gallerySort" : state.view === "actresses" ? "peopleSort" : state.view === "studios" ? "studioSort" : "movieSort";
   if (!values.includes(state[key])) {
-    if (key === "peopleSort") state[key] = values[0];
+    if (key === "peopleSort" || key === "studioSort") state[key] = "name";
     else if (key === "movieSort") state[key] = "releaseDate";
+    else if (state.view === "images" && state.imagesViewAll) state[key] = "actress";
     else state[key] = "title";
   }
   return state[key];
@@ -1062,15 +1248,17 @@ function updateSortOptions() {
 }
 
 function sortStateKey() {
+  if (state.view === "images" && state.imagesViewAll) return "imageSort";
   if (state.view === "images") return "imageActressSort";
   if (state.view === "imageGallery") return "imageSort";
   if (state.view === "imageActress" || (state.view === "actress" && state.currentActressSection === "images")) return "gallerySort";
-  if (isPeopleView()) return "peopleSort";
+  if (state.view === "actresses") return "peopleSort";
+  if (state.view === "studios") return "studioSort";
   return "movieSort";
 }
 
 function randomBucketForSortKey(key) {
-  if (key === "imageActressSort" || key === "peopleSort") return "people";
+  if (key === "imageActressSort" || key === "peopleSort" || key === "studioSort") return "people";
   if (key === "imageSort") return "images";
   if (key === "gallerySort") return "galleries";
   return "movies";
@@ -1080,7 +1268,8 @@ function setSortValue(value, { rerandomize = false } = {}) {
   const key = sortStateKey();
   const previous = state[key];
   state[key] = value;
-  const preferenceKey = key === "peopleSort" ? "peopleSort" : key === "movieSort" ? "movieSort" : key;
+  state.allImagesRenderCount = 120;
+  const preferenceKey = key === "movieSort" ? "movieSort" : key;
   savePreference(preferenceKey, state[key]);
   if (value === "random" && (rerandomize || previous !== "random")) resetRandomRanks(randomBucketForSortKey(key));
   render();
@@ -1098,6 +1287,7 @@ function cycleSortOption() {
 
 function randomizeCurrentListing() {
   const key = sortStateKey();
+  state.allImagesRenderCount = 120;
   setSortValue("random", { rerandomize: true });
   resetRandomRanks(randomBucketForSortKey(key));
   render();
@@ -1105,19 +1295,195 @@ function randomizeCurrentListing() {
   showToast("Randomized.");
 }
 
+function buildSearchIndex() {
+  const galleryByKey = new Map((state.library?.imageGalleries || []).map((gallery) => [gallery.key, gallery]));
+  const movies = (state.library?.movies || []).map((movie) => ({
+    type: "movie",
+    key: movie.key,
+    title: movie.title || movie.id || "Untitled",
+    subtitle: [movie.id, (movie.actresses || []).join(", "), movie.studio, movie.releaseDate].filter(Boolean).join(" - "),
+    imageUrl: movie.coverUrl || movie.posterUrl || "",
+    haystack: [movie.id, movie.title, movie.studio, ...(movie.actresses || []), movie.path].filter(Boolean).join(" "),
+    open: () => showDetail(movie.key)
+  }));
+  const actresses = (state.library?.actresses || []).map((actress) => ({
+    type: "actress",
+    key: actress.name,
+    title: actress.name,
+    subtitle: `${actress.movieCount || 0} movies - ${actress.galleryCount || 0} galleries - ${actress.imageCount || 0} images`,
+    imageUrl: actress.imageUrl || "",
+    haystack: [actress.name].join(" "),
+    open: () => goTo({ view: "actress", currentActress: actress.name, currentActressSection: "movies" })
+  }));
+  const studios = (state.library?.studios || []).map((studio) => ({
+    type: "studio",
+    key: studio.name,
+    title: studio.name,
+    subtitle: `${studio.movieCount || 0} movies`,
+    imageUrl: studio.imageUrl || "",
+    haystack: [studio.name].join(" "),
+    open: () => goTo({ view: "studio", currentStudio: studio.name })
+  }));
+  const galleries = (state.library?.imageGalleries || []).map((gallery) => ({
+    type: "gallery",
+    key: gallery.key,
+    title: gallery.title,
+    subtitle: [gallery.actressName, `${gallery.imageCount || 0} images`, gallery.path].filter(Boolean).join(" - "),
+    imageUrl: gallery.coverUrl || gallery.posterUrl || "",
+    haystack: [gallery.title, gallery.actressName, gallery.path].filter(Boolean).join(" "),
+    open: () => goTo({ view: "imageGallery", currentImageGallery: gallery.key, currentImageActress: gallery.actressName || "" })
+  }));
+  const images = (state.library?.images || []).map((image) => {
+    const gallery = galleryByKey.get(image.galleryKey);
+    return {
+      type: "image",
+      key: image.key,
+      title: image.title || image.filename || "Image",
+      subtitle: [image.actressName, gallery?.title, image.fileSizeLabel].filter(Boolean).join(" - "),
+      imageUrl: image.imageUrl || "",
+      haystack: [image.title, image.filename, image.actressName, gallery?.title, image.path, image.hostPath].filter(Boolean).join(" "),
+      open: () => {
+        const resultImages = imagesByKeys(state.searchResults.filter((item) => item.type === "image").map((item) => item.key));
+        const lightboxImages = resultImages.length ? resultImages : [image];
+        const index = Math.max(0, lightboxImages.findIndex((item) => item.key === image.key));
+        openLightbox(imageLightboxItems(lightboxImages), index);
+      }
+    };
+  });
+  state.searchIndex = [...movies, ...actresses, ...studios, ...galleries, ...images];
+  updateSearchResults();
+}
+
+function openSearch() {
+  if (!searchModal) return true;
+  searchModal.hidden = false;
+  updateSearchResults();
+  requestAnimationFrame(() => {
+    searchInput?.focus();
+    searchInput?.select();
+  });
+  return true;
+}
+
+function closeSearch() {
+  if (!searchModal || searchModal.hidden) return false;
+  searchModal.hidden = true;
+  return true;
+}
+
+function updateSearchResults() {
+  if (!searchResults) return;
+  const query = (searchInput?.value || "").trim().toLowerCase();
+  const terms = query.split(/\s+/).filter(Boolean);
+  if (!terms.length) {
+    state.searchResults = [];
+    state.searchActiveIndex = 0;
+    renderSearchResults();
+    return;
+  }
+  const filter = state.searchFilter;
+  const candidates = state.searchIndex.filter((item) => {
+    if (filter !== "all" && item.type !== filter) return false;
+    const haystack = `${item.title} ${item.subtitle} ${item.haystack}`.toLowerCase();
+    return terms.every((term) => haystack.includes(term));
+  });
+  state.searchResults = candidates.slice(0, 80);
+  state.searchActiveIndex = Math.min(state.searchActiveIndex, Math.max(0, state.searchResults.length - 1));
+  renderSearchResults();
+}
+
+function renderSearchResults() {
+  if (!searchResults) return;
+  if (!state.searchResults.length) {
+    searchResults.innerHTML = (searchInput?.value || "").trim()
+      ? `<div class="empty-state">No matches</div>`
+      : `<div class="search-empty">
+          <img src="/favicon.png" alt="">
+          <strong>Nothing to see here!</strong>
+        </div>`;
+    return;
+  }
+  searchResults.innerHTML = state.searchResults.map((item, index) => `
+    <button class="search-result ${index === state.searchActiveIndex ? "active" : ""}" data-action="search-open" data-index="${index}">
+      ${item.imageUrl ? `<img class="search-thumb" src="${cacheBust(item.imageUrl)}" alt="">` : `<span class="search-thumb placeholder-thumb"></span>`}
+      <span>
+        <strong>${escapeHtml(item.title)}</strong>
+        <small>${escapeHtml(item.subtitle || typeLabel(item.type))}</small>
+      </span>
+      <em>${escapeHtml(typeLabel(item.type))}</em>
+    </button>
+  `).join("");
+  searchResults.querySelector(".search-result.active")?.scrollIntoView({ block: "nearest" });
+}
+
+function typeLabel(type) {
+  return {
+    movie: "Movie",
+    actress: "Actress",
+    studio: "Studio",
+    gallery: "Gallery",
+    image: "Image"
+  }[type] || type;
+}
+
+function activateSearchResult(index = state.searchActiveIndex) {
+  const item = state.searchResults[index];
+  if (!item) return;
+  closeSearch();
+  item.open();
+}
+
+function setSearchFilter(filter) {
+  state.searchFilter = filter;
+  searchTabs.querySelectorAll("button").forEach((button) => button.classList.toggle("active", button.dataset.filter === filter));
+  state.searchActiveIndex = 0;
+  updateSearchResults();
+}
+
+function moveSearchFilter(delta) {
+  const buttons = [...searchTabs.querySelectorAll("[data-action='search-filter']")];
+  const index = Math.max(0, buttons.findIndex((button) => button.dataset.filter === state.searchFilter));
+  const next = buttons[(index + delta + buttons.length) % buttons.length];
+  if (next) setSearchFilter(next.dataset.filter);
+}
+
+function handleSearchKeydown(event) {
+  if (searchModal.hidden) return false;
+  if (event.key === "ArrowDown") {
+    state.searchActiveIndex = state.searchResults.length ? Math.min(state.searchResults.length - 1, state.searchActiveIndex + 1) : 0;
+    renderSearchResults();
+  } else if (event.key === "ArrowUp") {
+    state.searchActiveIndex = state.searchResults.length ? Math.max(0, state.searchActiveIndex - 1) : 0;
+    renderSearchResults();
+  } else if (event.key === "ArrowLeft") {
+    moveSearchFilter(-1);
+  } else if (event.key === "ArrowRight") {
+    moveSearchFilter(1);
+  } else if (event.key === "Enter") {
+    activateSearchResult();
+  } else if (event.key === "Escape") {
+    closeSearch();
+  } else {
+    return false;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+  return true;
+}
+
 function render() {
   if (!state.library) return;
   updateChrome();
   if (state.view === "actresses") return renderActresses();
   if (state.view === "studios") return renderStudios();
-  if (state.view === "images") return renderImageActresses();
+  if (state.view === "images") return state.imagesViewAll ? renderAllImages() : renderImageActresses();
   if (state.view === "imageActress") return renderImageActress(state.currentImageActress);
   if (state.view === "imageGallery") return renderImageGallery(state.currentImageGallery);
   if (state.view === "galleryMovies") return renderGalleryMovies(state.currentMovieGallery);
   if (state.view === "actress") return renderActress(state.currentActress);
   if (state.view === "studio") return renderStudio(state.currentStudio);
   if (state.view === "playlist") return renderPlaylist();
-  return renderMovieGrid(state.library.movies, state.view, state.view === "covers" ? "Covers" : "Posters");
+  return renderMovieGrid(state.library.movies, state.movieMode, "Movies");
 }
 
 function renderMovieGrid(movies, mode, title) {
@@ -1175,7 +1541,7 @@ function movieCard(movie, mode) {
 function renderPlaylist() {
   const playlist = currentPlaylist();
   if (!playlist) {
-    state.view = "covers";
+    state.view = "movies";
     return render();
   }
   const mode = state.playlistMode;
@@ -1248,9 +1614,7 @@ function personCard(type) {
   const placeholderClass = type === "studio" ? "cover" : "poster";
   return (person) => {
     const stats = type === "actress" ? actressGalleryStats(person.name) : null;
-    const totalSize = type === "actress"
-      ? fileSizeLabel(moviesByKeys(person.movies || []).reduce((sum, movie) => sum + Number(movie.fileSize || 0), 0) + stats.fileSize)
-      : "";
+    const totalSize = type === "actress" ? (person.totalFileSizeLabel || fileSizeLabel(personTotalFileSize(person))) : "";
     return `
     <article class="card person-card ${personFavorite(type, person.name) ? "is-favorite" : ""}" data-action="${type}" data-name="${escapeAttr(person.name)}">
       <button class="wall-play-button person-play-button" data-action="person-play" data-type="${type}" data-name="${escapeAttr(person.name)}" title="Play" aria-label="Play">▶</button>
@@ -1292,12 +1656,12 @@ function sortedImageActresses() {
 }
 
 function currentImageActressGalleries() {
-  const actress = state.library.imageActresses.find((item) => item.name === state.currentImageActress);
+  const actress = imageActressForName(state.currentImageActress);
   return sortedGalleries(galleriesByKeys(actress?.galleries || []));
 }
 
 function galleriesForActressName(name) {
-  const actress = state.library.imageActresses.find((item) => item.name === name);
+  const actress = imageActressForName(name);
   return sortedGalleries(galleriesByKeys(actress?.galleries || []));
 }
 
@@ -1318,6 +1682,42 @@ function renderImageActresses() {
     </div>
   `;
   updatePlaylistControls();
+}
+
+function renderAllImages() {
+  const images = allImagesForView();
+  state.currentRenderedMovieKeys = [];
+  state.currentRenderedImageKeys = images.map((image) => image.key);
+  state.currentRenderedTitle = "All Images";
+  const rendered = images.slice(0, state.allImagesRenderCount);
+  app.innerHTML = `
+    <div class="section-head">
+      <div>
+        <h2>Images</h2>
+        <p>${images.length} image${images.length === 1 ? "" : "s"}</p>
+      </div>
+    </div>
+    <div class="image-grid ${state.minimal ? "wall" : ""}" data-all-images="true">
+      ${imageRows(rendered).map((row) => `
+        <div class="image-row" style="--row-image-height: ${row.height}px">
+          ${row.items.map((image) => imageCard(image, row.height)).join("")}
+        </div>
+      `).join("")}
+    </div>
+  `;
+  updatePlaylistControls();
+}
+
+function allImagesForView() {
+  return visibleGalleryImages(sortedImages([...(state.library.images || [])]));
+}
+
+function appendMoreAllImages() {
+  if (!(state.view === "images" && state.imagesViewAll)) return;
+  const images = allImagesForView();
+  if (state.allImagesRenderCount >= images.length) return;
+  state.allImagesRenderCount = Math.min(images.length, state.allImagesRenderCount + 120);
+  render();
 }
 
 function imageActressCard(actress) {
@@ -1348,12 +1748,12 @@ function imageActressCard(actress) {
 }
 
 function renderImageActress(name) {
-  const actress = state.library.imageActresses.find((item) => item.name === name);
+  const actress = imageActressForName(name);
   if (!actress) {
     state.view = "images";
     return render();
   }
-  state.currentImageActress = name;
+  state.currentImageActress = actress.name;
   const galleries = currentImageActressGalleries();
   const visibleGalleries = galleries.filter((gallery) => !state.favoritesOnly || galleryFavorite(gallery.key));
   state.currentRenderedMovieKeys = [];
@@ -1370,11 +1770,21 @@ function renderImageActress(name) {
         <button class="${state.imageMode === "posters" ? "active" : ""}" data-action="image-mode" data-mode="posters">Posters</button>
       </div>
     </div>
-    <div class="grid ${state.imageMode === "covers" ? "cover-grid" : ""} ${state.minimal ? "wall" : ""}">
-      ${visibleGalleries.map(galleryCard).join("")}
-    </div>
+    ${galleryListHtml(visibleGalleries)}
   `;
   updatePlaylistControls();
+}
+
+function galleryListHtml(galleries) {
+  return `
+    <div class="gallery-list ${state.minimal ? "wall" : ""}">
+      ${galleryRows(galleries).map((row) => `
+        <div class="gallery-row" style="--gallery-card-width: ${row.cardWidth}px; --gallery-image-height: ${row.imageHeight}px">
+          ${row.items.map(galleryCard).join("")}
+        </div>
+      `).join("")}
+    </div>
+  `;
 }
 
 function galleryCard(gallery) {
@@ -1436,6 +1846,21 @@ function renderImageGallery(key) {
     </div>
   `;
   updatePlaylistControls();
+  scrollPendingImageIntoView();
+}
+
+function scrollPendingImageIntoView() {
+  if (!state.pendingScrollImageKey) return;
+  requestAnimationFrame(() => {
+    const target = document.querySelector(`.image-card[data-key="${CSS.escape(state.pendingScrollImageKey)}"]`);
+    if (target) {
+      target.scrollIntoView({ block: "center", behavior: "smooth" });
+      target.classList.add("focus-pulse");
+      setTimeout(() => target.classList.remove("focus-pulse"), 1200);
+    }
+    state.pendingScrollImageKey = "";
+    saveLocalUiState();
+  });
 }
 
 function renderGalleryMovies(key) {
@@ -1450,6 +1875,7 @@ function renderGalleryMovies(key) {
 function imageCard(image, rowHeight = galleryTargetHeight()) {
   const orientation = imageOrientation(image);
   const width = Math.max(80, Math.round(imageAspect(image) * rowHeight));
+  const showViewGallery = state.view !== "imageGallery";
   const artMenu = image.galleryKey ? `
     <details class="image-art-menu">
       <summary title="Image options" aria-label="Image options">...</summary>
@@ -1457,6 +1883,7 @@ function imageCard(image, rowHeight = galleryTargetHeight()) {
         ${orientation === "portrait" ? `<button data-action="set-actress-image" data-image-key="${escapeAttr(image.key)}">Set as Actress Image</button>` : ""}
         ${orientation === "landscape" ? `<button data-action="set-gallery-art" data-kind="cover" data-gallery-key="${escapeAttr(image.galleryKey)}" data-image-key="${escapeAttr(image.key)}">Set as Cover</button>` : ""}
         ${orientation === "portrait" ? `<button data-action="set-gallery-art" data-kind="poster" data-gallery-key="${escapeAttr(image.galleryKey)}" data-image-key="${escapeAttr(image.key)}">Set as Poster</button>` : ""}
+        ${showViewGallery ? `<button data-action="image-gallery" data-key="${escapeAttr(image.galleryKey)}" data-image-key="${escapeAttr(image.key)}">View Gallery</button>` : ""}
       </div>
     </details>
   ` : "";
@@ -1514,9 +1941,7 @@ function renderActress(name) {
           <button class="${state.imageMode === "posters" ? "active" : ""}" data-action="image-mode" data-mode="posters">Posters</button>
         </div>
       </div>
-      <div class="grid ${state.imageMode === "covers" ? "cover-grid" : ""} ${state.minimal ? "wall" : ""}">
-        ${visibleGalleries.map(galleryCard).join("")}
-      </div>
+      ${galleryListHtml(visibleGalleries)}
     `;
     updatePlaylistControls();
     return;
@@ -1630,8 +2055,8 @@ function showDetail(key) {
           <button data-action="counter-minus" data-key="${escapeAttr(movie.key)}" title="Subtract counter (-)">−</button>
           <span class="detail-counter">${movieCounter(movie.key)}</span>
           <button data-action="counter-plus" data-key="${escapeAttr(movie.key)}" title="Add counter (+)">+</button>
-          <button data-action="lightbox-one" data-kind="cover" data-key="${escapeAttr(movie.key)}" title="View Cover (V)">View Cover</button>
-          <button data-action="lightbox-one" data-kind="poster" data-key="${escapeAttr(movie.key)}" title="View Poster (B)">View Poster</button>
+          <button data-action="lightbox-one" data-kind="cover" data-key="${escapeAttr(movie.key)}" title="View Cover (H)">View Cover</button>
+          <button data-action="lightbox-one" data-kind="poster" data-key="${escapeAttr(movie.key)}" title="View Poster (J)">View Poster</button>
           ${canRegenerateScreenshot ? `<button data-action="regenerate-screenshot" data-key="${escapeAttr(movie.key)}">Regenerate Screenshot</button>` : ""}
           ${gallery ? `<button data-action="image-gallery" data-key="${escapeAttr(gallery.key)}">View Gallery</button>` : ""}
         </div>
@@ -1695,9 +2120,9 @@ function renderLightbox() {
   lightboxLimitBtn.innerHTML = lockIcon(state.lightboxLimitSize);
   slideshowBtn.hidden = item.type !== "image";
   slideshowSeconds.closest("label").hidden = item.type !== "image";
-  setGalleryCoverBtn.hidden = item.type !== "image" || !gallery || orientation !== "landscape";
-  setGalleryPosterBtn.hidden = item.type !== "image" || !gallery || orientation !== "portrait";
-  setActressImageBtn.hidden = item.type !== "image" || orientation !== "portrait";
+  setGalleryCoverBtn.hidden = true;
+  setGalleryPosterBtn.hidden = true;
+  setActressImageBtn.hidden = true;
   setGalleryCoverBtn.dataset.galleryKey = gallery?.key || "";
   setGalleryCoverBtn.dataset.imageKey = item.key;
   setGalleryPosterBtn.dataset.galleryKey = gallery?.key || "";
@@ -1705,7 +2130,28 @@ function renderLightbox() {
   setActressImageBtn.dataset.imageKey = item.key;
   setGalleryCoverBtn.classList.toggle("active", gallery?.coverImageKey === item.key);
   setGalleryPosterBtn.classList.toggle("active", gallery?.posterImageKey === item.key);
+  lightboxMoreActions.innerHTML = lightboxMoreActionsHtml(item, movie, imageItem, gallery, orientation);
+  lightboxMoreMenu.hidden = !lightboxMoreActions.innerHTML.trim();
   slideshowBtn.classList.toggle("active", state.slideshowOn);
+}
+
+function lightboxMoreActionsHtml(item, movie, imageItem, gallery, orientation) {
+  if (imageItem) {
+    const actions = [];
+    if (orientation === "portrait") actions.push(`<button data-action="set-actress-image" data-image-key="${escapeAttr(imageItem.key)}">Set as Actress Image</button>`);
+    if (orientation === "landscape" && gallery) actions.push(`<button class="${gallery.coverImageKey === imageItem.key ? "active" : ""}" data-action="set-gallery-art" data-kind="cover" data-gallery-key="${escapeAttr(gallery.key)}" data-image-key="${escapeAttr(imageItem.key)}">Set as Cover</button>`);
+    if (orientation === "portrait" && gallery) actions.push(`<button class="${gallery.posterImageKey === imageItem.key ? "active" : ""}" data-action="set-gallery-art" data-kind="poster" data-gallery-key="${escapeAttr(gallery.key)}" data-image-key="${escapeAttr(imageItem.key)}">Set as Poster</button>`);
+    if (imageItem.actressName) actions.push(`<button data-action="actress-galleries" data-name="${escapeAttr(imageItem.actressName)}">View Actress</button>`);
+    if (gallery) actions.push(`<button data-action="image-gallery" data-key="${escapeAttr(gallery.key)}" data-image-key="${escapeAttr(imageItem.key)}">View Gallery</button>`);
+    return actions.join("");
+  }
+  if (!movie) return "";
+  const actressName = movie.actresses?.[0] || "";
+  const actions = [
+    `<button data-action="lightbox-add-playlist" data-key="${escapeAttr(movie.key)}">Add to Playlist</button>`
+  ];
+  if (actressName) actions.push(`<button data-action="actress" data-name="${escapeAttr(actressName)}">View ${escapeHtml(actressName)}</button>`);
+  return actions.join("");
 }
 
 function lockIcon(locked) {
@@ -1738,7 +2184,9 @@ function applyLightboxZoom() {
     return;
   }
   if (item?.kind === "posters") {
-    const height = Math.round(900 * (state.lightboxSize / 100));
+    const viewport = document.querySelector(".lightbox-viewport");
+    const maxHeight = Math.max(180, (viewport?.clientHeight || window.innerHeight) - 8);
+    const height = Math.round(maxHeight * (2 / 3) * (state.lightboxSize / 100));
     image.style.height = `${height}px`;
     state.lastLightboxHeight = height;
     return;
@@ -1921,7 +2369,7 @@ async function deleteCurrentPlaylist() {
   state.playlistEditKeys.clear();
   state.playlistEditImageKeys.clear();
   state.playlistDirty = false;
-  goTo({ view: "covers" });
+  goTo({ view: "movies" });
 }
 
 async function openCurrentPlaylist() {
@@ -1979,7 +2427,7 @@ function openPersonPlaylist(type, name) {
 }
 
 function openImageActressPlaylist(name) {
-  const actress = state.library.imageActresses.find((item) => item.name === name);
+  const actress = imageActressForName(name);
   openTemporaryPlaylist(name, [], imageActressImageKeysByPath(actress)).catch((error) => showToast(error.message));
 }
 
@@ -2042,6 +2490,31 @@ function createOrUpdatePlaylistFromSelection() {
   state.currentPlaylistId = "";
   state.playlistEditKeys = new Set(state.playlistDraft.movieKeys);
   state.playlistEditImageKeys = new Set(state.playlistDraft.imageKeys);
+  state.playlistDirty = true;
+  goTo({ view: "playlist" });
+}
+
+function addMovieToPlaylistFromLightbox(key) {
+  if (!key) return;
+  const playlist = !state.playlistDraft && state.currentPlaylistId ? currentPlaylist() : null;
+  if (playlist) {
+    state.playlistEditKeys = new Set([...(playlist.movieKeys || []), key]);
+    state.playlistEditImageKeys = new Set(playlist.imageKeys || []);
+    state.playlistDirty = true;
+    showToast(`Added movie to "${playlist.name}". Save the playlist to keep it.`);
+    goTo({ view: "playlist" });
+    return;
+  }
+  state.playlistDraft = {
+    id: "__draft__",
+    name: defaultPlaylistName(),
+    favorite: false,
+    movieKeys: [key],
+    imageKeys: []
+  };
+  state.currentPlaylistId = "";
+  state.playlistEditKeys = new Set(state.playlistDraft.movieKeys);
+  state.playlistEditImageKeys = new Set();
   state.playlistDirty = true;
   goTo({ view: "playlist" });
 }
@@ -2218,6 +2691,13 @@ function setListingMode(mode) {
   if (state.view === "imageGallery") return false;
   if (state.view === "actress" && state.currentActressSection === "images") return setImageMode(mode);
   if (state.view === "imageActress") return setImageMode(mode);
+  if (state.view === "movies") {
+    state.movieMode = mode;
+    savePreference("movieMode", mode);
+    render();
+    saveLocalUiState();
+    return true;
+  }
   if (state.view === "playlist") {
     state.playlistMode = mode;
     render();
@@ -2240,15 +2720,8 @@ function setListingMode(mode) {
     render();
     return true;
   }
-  if (mode === "covers" && state.view !== "covers") {
-    goTo({ view: "covers" });
-    return true;
-  }
-  if (mode === "posters" && state.view !== "posters") {
-    goTo({ view: "posters" });
-    return true;
-  }
-  return false;
+  goTo({ view: "movies", movieMode: mode });
+  return true;
 }
 
 function setImageMode(mode) {
@@ -2266,13 +2739,13 @@ function toggleFavoritesFilter() {
 
 function toggleImageWall() {
   state.minimal = !state.minimal;
-  savePreference("imageWall", state.minimal);
+  saveCurrentListingToggleState();
   render();
 }
 
 function toggleHideMissingImages() {
   state.hideMissingImages = !state.hideMissingImages;
-  savePreference("hideMissingImages", state.hideMissingImages);
+  saveCurrentListingToggleState();
   render();
 }
 
@@ -2291,9 +2764,37 @@ function toggleShowIds() {
 }
 
 function toggleImageOrientation(key) {
-  if (state.view !== "imageGallery") return false;
-  state.imageOrientationFilters[key] = !state.imageOrientationFilters[key];
+  if (!(state.view === "imageGallery" || (state.view === "images" && state.imagesViewAll))) return false;
+  const preferenceKey = state.view === "images" && state.imagesViewAll ? "allImageOrientationFilters" : "imageOrientationFilters";
+  state[preferenceKey] = { ...state[preferenceKey], [key]: !state[preferenceKey][key] };
+  state.allImagesRenderCount = 120;
+  savePreference(preferenceKey, state[preferenceKey]);
+  saveLocalUiState();
   render();
+  return true;
+}
+
+function toggleImagesViewAll() {
+  if (state.view !== "images") return false;
+  state.imagesViewAll = !state.imagesViewAll;
+  state.allImagesRenderCount = 120;
+  if (state.imagesViewAll && !["actress", "fileSize", "random"].includes(state.imageSort)) state.imageSort = "actress";
+  applyListingToggleState();
+  render();
+  saveLocalUiState();
+  return true;
+}
+
+function setActressSection(section) {
+  if (state.view !== "actress") return false;
+  if (section === "images") {
+    const actress = imageActressForName(state.currentActress);
+    if (!actress?.galleries?.length) return false;
+  }
+  state.currentActressSection = section;
+  applyListingToggleState();
+  render();
+  window.scrollTo({ top: 0 });
   return true;
 }
 
@@ -2322,6 +2823,9 @@ function adjustListingSize(delta) {
   let next = Math.max(min, Math.min(max, start + direction * step));
   while (next > min && next < max && listingLayoutSignature(next) === currentSignature) {
     next = Math.max(min, Math.min(max, next + direction * step));
+  }
+  if (listingLayoutSignature(next) === currentSignature) {
+    next = Math.max(min, Math.min(max, start + direction * step));
   }
   slider.value = next;
   setCurrentImageSize(next);
@@ -2390,6 +2894,7 @@ function selectAllVisible() {
 }
 
 function closeActiveOverlayOrMenu() {
+  if (closeSearch()) return true;
   if (!document.querySelector("#lightbox").hidden) {
     document.querySelector("#lightbox").hidden = true;
     stopSlideshow(false);
@@ -2404,7 +2909,7 @@ function closeActiveOverlayOrMenu() {
     optionsMenu.open = false;
     return true;
   }
-  for (const menu of document.querySelectorAll(".image-art-menu[open]")) {
+  for (const menu of document.querySelectorAll(".image-art-menu[open], .lightbox-more-menu[open]")) {
     menu.open = false;
     return true;
   }
@@ -2494,26 +2999,28 @@ function handleGlobalShortcut(event) {
     adjustListingSize(-10);
     return true;
   }
-  if (key === "1") goTo({ view: "covers" });
-  else if (key === "2") goTo({ view: "posters" });
-  else if (key === "3") goTo({ view: "actresses" });
-  else if (key === "4") goTo({ view: "studios" });
-  else if (key === "5") goTo({ view: "images" });
+  if (key === "1") goTo({ view: "movies" });
+  else if (key === "2") goTo({ view: "actresses" });
+  else if (key === "3") goTo({ view: "studios" });
+  else if (key === "4") goTo({ view: "images" });
   else if (key === "c") setListingMode("covers");
-  else if (key === "l" && state.view === "imageGallery") toggleImageOrientation("landscape");
-  else if (key === "p" && state.view === "imageGallery") toggleImageOrientation("portrait");
+  else if (key === "/" || key === "k" && (event.metaKey || event.ctrlKey)) openSearch();
+  else if (key === "l" && (state.view === "imageGallery" || (state.view === "images" && state.imagesViewAll))) toggleImageOrientation("landscape");
+  else if (key === "p" && (state.view === "imageGallery" || (state.view === "images" && state.imagesViewAll))) toggleImageOrientation("portrait");
   else if (key === "p") setListingMode("posters");
   else if (key === "f") toggleFavoritesFilter();
   else if (key === "r") randomizeCurrentListing();
   else if (key === "s") cycleSortOption();
   else if (key === "0") cycleTheme();
   else if (key === "t") toggleScrollTopButton();
+  else if (key === "h") toggleViewCovers();
+  else if (key === "j") toggleViewPosters();
   else if (key === "w") toggleImageWall();
+  else if (key === "m" && state.view === "actress") setActressSection("movies");
+  else if (key === "g" && state.view === "actress") setActressSection("images");
   else if (key === "m") toggleHideMissingImages();
   else if (key === "n") toggleHideNoNfoMovies();
   else if (key === "i" && state.minimal) toggleShowIds();
-  else if (key === "v") toggleViewCovers();
-  else if (key === "b") toggleViewPosters();
   else if (key === "a") selectAllVisible();
   else if (key === "x") clearSingleSelection();
   else return false;
@@ -2523,6 +3030,29 @@ function handleGlobalShortcut(event) {
 document.querySelector("#scanBtn").addEventListener("click", scanLibrary);
 backBtn.addEventListener("click", () => {
   goBack();
+});
+searchBtn.addEventListener("click", openSearch);
+viewAllImagesBtn.addEventListener("click", toggleImagesViewAll);
+searchInput.addEventListener("input", () => {
+  state.searchActiveIndex = 0;
+  updateSearchResults();
+});
+searchModal.addEventListener("keydown", handleSearchKeydown);
+searchTabs.addEventListener("click", (event) => {
+  const target = event.target.closest("[data-action='search-filter']");
+  if (!target) return;
+  setSearchFilter(target.dataset.filter);
+});
+searchResults.addEventListener("mouseover", (event) => {
+  const target = event.target.closest("[data-action='search-open']");
+  if (!target) return;
+  const index = Number(target.dataset.index || 0);
+  if (index === state.searchActiveIndex) return;
+  state.searchActiveIndex = index;
+  renderSearchResults();
+});
+searchModal.addEventListener("mousedown", (event) => {
+  if (event.target === searchModal) closeSearch();
 });
 document.querySelectorAll(".nav button").forEach((btn) => {
   btn.addEventListener("click", () => {
@@ -2545,7 +3075,7 @@ playlistSelect.addEventListener("change", () => {
     state.playlistEditKeys.clear();
     state.playlistEditImageKeys.clear();
     state.playlistDirty = false;
-    goTo({ view: "covers" });
+    goTo({ view: "movies" });
     return;
   }
   if (id === "__draft__") {
@@ -2581,7 +3111,7 @@ favoritesFilterBtn.addEventListener("click", () => {
 });
 minimalToggle.addEventListener("change", () => {
   state.minimal = minimalToggle.checked;
-  savePreference("imageWall", state.minimal);
+  saveCurrentListingToggleState();
   render();
 });
 wallIdsToggle.addEventListener("change", () => {
@@ -2591,7 +3121,7 @@ wallIdsToggle.addEventListener("change", () => {
 });
 hideMissingToggle.addEventListener("change", () => {
   state.hideMissingImages = hideMissingToggle.checked;
-  savePreference("hideMissingImages", state.hideMissingImages);
+  saveCurrentListingToggleState();
   render();
 });
 hideNoNfoToggle.addEventListener("change", () => {
@@ -2601,7 +3131,7 @@ hideNoNfoToggle.addEventListener("change", () => {
 });
 imageSizeSlider.addEventListener("input", () => {
   setCurrentImageSize(imageSizeSlider.value);
-  updateGalleryImageRows();
+  if (!updateGalleryImageRows()) render();
 });
 imageSizeSlider.addEventListener("change", render);
 lightboxSizeSlider.addEventListener("input", () => {
@@ -2662,7 +3192,7 @@ document.addEventListener("click", (event) => {
   optionsMenu.open = false;
 });
 document.addEventListener("click", (event) => {
-  for (const menu of document.querySelectorAll(".image-art-menu[open]")) {
+  for (const menu of document.querySelectorAll(".image-art-menu[open], .lightbox-more-menu[open]")) {
     if (!menu.contains(event.target)) menu.open = false;
   }
 });
@@ -2679,6 +3209,9 @@ scrollTopBtn.addEventListener("click", () => {
 });
 window.addEventListener("scroll", () => {
   scrollTopBtn.hidden = window.scrollY < 500;
+  if (state.view === "images" && state.imagesViewAll && window.innerHeight + window.scrollY > document.documentElement.scrollHeight - 900) {
+    appendMoreAllImages();
+  }
 }, { passive: true });
 window.addEventListener("beforeunload", saveLocalUiState);
 
@@ -2686,6 +3219,9 @@ document.body.addEventListener("click", (event) => {
   const target = event.target.closest("[data-action]");
   if (!target) return;
   const action = target.dataset.action;
+  if (action === "search-open") {
+    activateSearchResult(Number(target.dataset.index || 0));
+  }
   if (action === "detail") showDetail(target.dataset.key);
   if (action === "open") openMovie(target.dataset.key).catch((error) => showToast(error.message));
   if (action === "open-image") openImage(target.dataset.key).catch((error) => showToast(error.message));
@@ -2739,6 +3275,13 @@ document.body.addEventListener("click", (event) => {
     goTo({ view: "actress", currentActress: target.dataset.name, currentActressSection: "movies" });
     if (!scrollKey) window.scrollTo({ top: 0 });
   }
+  if (action === "actress-galleries") {
+    document.querySelector("#detail").hidden = true;
+    document.querySelector("#lightbox").hidden = true;
+    stopSlideshow(false);
+    goTo({ view: "actress", currentActress: target.dataset.name, currentActressSection: "images" });
+    window.scrollTo({ top: 0 });
+  }
   if (action === "studio") {
     document.querySelector("#detail").hidden = true;
     document.querySelector("#lightbox").hidden = true;
@@ -2755,14 +3298,15 @@ document.body.addEventListener("click", (event) => {
     setListingMode(target.dataset.mode);
   }
   if (action === "actress-section") {
-    state.currentActressSection = target.dataset.section;
-    render();
-    window.scrollTo({ top: 0 });
+    setActressSection(target.dataset.section);
   }
   if (action === "studio-mode") {
     setListingMode(target.dataset.mode);
   }
   if (action === "playlist-mode") {
+    setListingMode(target.dataset.mode);
+  }
+  if (action === "listing-mode") {
     setListingMode(target.dataset.mode);
   }
   if (action === "favorites-only") {
@@ -2781,11 +3325,14 @@ document.body.addEventListener("click", (event) => {
     openLightbox(movieImageItems(movie), target.dataset.kind === "cover" ? 1 : 0);
   }
   if (action === "image-actress") {
-    goTo({ view: "imageActress", currentImageActress: target.dataset.name });
+    goTo({ view: "actress", currentActress: target.dataset.name, currentActressSection: "images" });
   }
   if (action === "image-gallery") {
     document.querySelector("#detail").hidden = true;
+    document.querySelector("#lightbox").hidden = true;
+    stopSlideshow(false);
     state.detailKey = "";
+    state.pendingScrollImageKey = target.dataset.imageKey || "";
     goTo({ view: "imageGallery", currentImageGallery: target.dataset.key, currentImageActress: state.currentImageActress || state.currentActress });
   }
   if (action === "gallery-movies") {
@@ -2795,9 +3342,7 @@ document.body.addEventListener("click", (event) => {
     setImageMode(target.dataset.mode);
   }
   if (action === "image-orientation") {
-    const key = target.dataset.orientation;
-    state.imageOrientationFilters[key] = !state.imageOrientationFilters[key];
-    render();
+    toggleImageOrientation(target.dataset.orientation);
   }
   if (action === "image-lightbox") {
     openImageLightboxByKey(target.dataset.key);
@@ -2805,6 +3350,11 @@ document.body.addEventListener("click", (event) => {
   if (action === "gallery-play") {
     event.stopPropagation();
     openGalleryPlaylist(target.dataset.key);
+  }
+  if (action === "lightbox-add-playlist") {
+    event.stopPropagation();
+    document.querySelector("#lightbox").hidden = true;
+    addMovieToPlaylistFromLightbox(target.dataset.key);
   }
   if (action === "set-gallery-art") {
     event.stopPropagation();

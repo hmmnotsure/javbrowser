@@ -24,8 +24,10 @@
       </div>
       <nav class="nav">
         <button id="backBtn" class="toolbar-icon" title="Back" aria-label="Back" disabled>←</button>
-        <button data-view="covers" class="active">Covers</button>
-        <button data-view="posters">Posters</button>
+        <button id="searchBtn" class="toolbar-icon" title="Search" aria-label="Search">
+          <svg class="button-svg" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M16.5 16.5 21 21"></path></svg>
+        </button>
+        <button data-view="movies" class="active">Movies</button>
         <button data-view="actresses">Actresses</button>
         <button data-view="studios">Studios</button>
         <button data-view="images">Images</button>
@@ -56,9 +58,9 @@
 
     <main>
       <section class="toolbar" id="toolbar">
-        <div class="segmented">
-          <button id="viewCovers">View Covers</button>
-          <button id="viewPosters">View Posters</button>
+        <div class="segmented" id="listingModeGroup">
+          <button id="listingCovers" data-action="listing-mode" data-mode="covers">Covers</button>
+          <button id="listingPosters" data-action="listing-mode" data-mode="posters">Posters</button>
         </div>
         <div class="sort-control">
           <label>
@@ -66,15 +68,24 @@
             <select id="sortSelect">
               <option value="actress">Actress</option>
               <option value="counter">Counter</option>
-              <option value="fileSize">File Size</option>
+              <option value="fileSize">File size</option>
               <option value="random">Random</option>
-              <option value="releaseDate">Release Date</option>
+              <option value="releaseDate">Release date</option>
               <option value="title">Title</option>
             </select>
           </label>
           <button id="favoritesFilterBtn" class="toolbar-icon" title="Favorites only" aria-label="Favorites only">♡</button>
         </div>
         <div class="toolbar-right">
+          <button id="viewAllImagesBtn">View All</button>
+          <div class="segmented" id="allImagesOrientationGroup">
+            <button id="allImagesLandscapeBtn" data-action="image-orientation" data-orientation="landscape">Landscape</button>
+            <button id="allImagesPortraitBtn" data-action="image-orientation" data-orientation="portrait">Portrait</button>
+          </div>
+          <div class="segmented" id="viewArtworkGroup">
+            <button id="viewCovers">View Covers</button>
+            <button id="viewPosters">View Posters</button>
+          </div>
           <details class="options-menu" id="optionsMenu">
             <summary>Options</summary>
             <div class="options-panel">
@@ -143,9 +154,13 @@
               <span id="lightboxCounterValue" class="detail-counter">0</span>
               <button id="lightboxCounterPlus" class="toolbar-icon" data-action="counter-plus" title="Add counter" aria-label="Add counter">+</button>
               <button id="lightboxOpen" class="toolbar-icon" data-action="open" title="Play" aria-label="Play">▶</button>
-              <button id="setGalleryCoverBtn" data-action="set-gallery-art" data-kind="cover" hidden>Set as Cover</button>
-              <button id="setGalleryPosterBtn" data-action="set-gallery-art" data-kind="poster" hidden>Set as Poster</button>
-              <button id="setActressImageBtn" data-action="set-actress-image" hidden>Set as Actress Image</button>
+              <details id="lightboxMoreMenu" class="lightbox-more-menu" hidden>
+                <summary title="More actions" aria-label="More actions">...</summary>
+                <div id="lightboxMoreActions"></div>
+              </details>
+              <button id="setGalleryCoverBtn" data-action="set-gallery-art" data-kind="cover" hidden></button>
+              <button id="setGalleryPosterBtn" data-action="set-gallery-art" data-kind="poster" hidden></button>
+              <button id="setActressImageBtn" data-action="set-actress-image" hidden></button>
             </div>
           </div>
         </figcaption>
@@ -155,6 +170,25 @@
 
     <div id="toast" class="toast" hidden></div>
     <button id="scrollTopBtn" class="scroll-top" title="Scroll to top" aria-label="Scroll to top" hidden>↑</button>
+
+    <div id="searchModal" class="modal" hidden>
+      <div class="modal-panel search-panel">
+        <button class="icon close" data-close="searchModal">x</button>
+        <label class="search-box">
+          Search
+          <input id="searchInput" type="search" autocomplete="off" placeholder="Search library">
+        </label>
+        <div class="search-tabs" id="searchTabs">
+          <button class="active" data-action="search-filter" data-filter="all">All</button>
+          <button data-action="search-filter" data-filter="movie">Movies</button>
+          <button data-action="search-filter" data-filter="actress">Actresses</button>
+          <button data-action="search-filter" data-filter="studio">Studios</button>
+          <button data-action="search-filter" data-filter="gallery">Galleries</button>
+          <button data-action="search-filter" data-filter="image">Images</button>
+        </div>
+        <div id="searchResults" class="search-results"></div>
+      </div>
+    </div>
 
     <div id="settings" class="modal" hidden>
       <div class="modal-panel settings-panel">

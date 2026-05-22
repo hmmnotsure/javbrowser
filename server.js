@@ -197,29 +197,63 @@ function canonicalizeActresses(names, preferredNames = []) {
     const name = normalizeName(preferred);
     if (!name) continue;
     canonical.set(comparableName(name), name);
-    const reversed = reversedTwoPartName(name);
-    if (reversed) canonical.set(comparableName(reversed), name);
   }
   for (const raw of names) {
     const name = normalizeName(raw);
     if (!name) continue;
     const key = comparableName(name);
-    const reversed = reversedTwoPartName(name);
     if (canonical.has(key)) continue;
-    if (reversed && canonical.has(comparableName(reversed))) {
-      canonical.set(key, canonical.get(comparableName(reversed)));
-    } else {
-      canonical.set(key, name);
-      if (reversed) canonical.set(comparableName(reversed), name);
-    }
+    canonical.set(key, name);
   }
   return unique([...canonical.values()]);
 }
 
 function namesEquivalent(a, b) {
-  const left = comparableName(a);
-  const right = comparableName(b);
-  return left === right || comparableName(reversedTwoPartName(a)) === right || comparableName(reversedTwoPartName(b)) === left;
+  return comparableName(a) === comparableName(b);
+}
+
+function findEquivalentName(name, items) {
+  return [...items].find((item) => namesEquivalent(item.name, name))?.name || "";
+}
+
+function uniqueKeys(keys = []) {
+  return [...new Set(keys.map(normalizeKey).filter(Boolean))];
+}
+
+function mergeActressEntries(entries) {
+  const sourcePriority = { image: 0, folder: 1, movie: 2, nfo: 3 };
+  const merged = [];
+  for (const entry of entries) {
+    const name = normalizeName(entry.name);
+    if (!name) continue;
+    const existing = merged.find((item) => namesEquivalent(item.name, name));
+    if (!existing) {
+      merged.push({
+        ...entry,
+        name,
+        nameSource: entry.nameSource || "movie",
+        movies: uniqueKeys(entry.movies || []),
+        image: entry.image || "",
+        imageUrl: entry.imageUrl || ""
+      });
+      continue;
+    }
+    if ((sourcePriority[entry.nameSource] || 0) > (sourcePriority[existing.nameSource] || 0)) {
+      existing.name = name;
+      existing.nameSource = entry.nameSource;
+    }
+    existing.movies = uniqueKeys([...(existing.movies || []), ...(entry.movies || [])]);
+    existing.image ||= entry.image || "";
+    existing.imageUrl ||= entry.imageUrl || "";
+    existing.movieCount = existing.movies.length;
+    existing.galleryCount = Math.max(Number(existing.galleryCount || 0), Number(entry.galleryCount || 0));
+    existing.imageCount = Math.max(Number(existing.imageCount || 0), Number(entry.imageCount || 0));
+    existing.galleryFileSize = Math.max(Number(existing.galleryFileSize || 0), Number(entry.galleryFileSize || 0));
+    existing.galleryFileSizeLabel = existing.galleryFileSizeLabel || entry.galleryFileSizeLabel || "";
+    existing.totalFileSize = Math.max(Number(existing.totalFileSize || 0), Number(entry.totalFileSize || 0));
+    existing.totalFileSizeLabel = existing.totalFileSizeLabel || entry.totalFileSizeLabel || "";
+  }
+  return merged;
 }
 
 function splitActresses(value) {
@@ -393,6 +427,31 @@ async function findStudioImage(studio) {
   return findFirst(IMAGE_EXTS.map((ext) => path.join(STUDIO_IMAGE_ROOT, `${slug}${ext}`)));
 }
 
+function safeFolderName(name) {
+  return normalizeName(name).replace(/[\\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim() || "Unknown";
+}
+
+async function individualActressFolder(name, { create = false } = {}) {
+  const normalized = normalizeName(name);
+  if (!normalized || normalized === NO_ACTRESS) return "";
+  for (const entry of await safeReadDir(MEDIA_ROOT)) {
+    if (!entry.isDirectory()) continue;
+    const names = splitActresses(entry.name);
+    if (names.length === 1 && namesEquivalent(names[0], normalized)) return path.join(MEDIA_ROOT, entry.name);
+  }
+  if (!create) return "";
+  const dir = path.join(MEDIA_ROOT, safeFolderName(normalized));
+  const resolved = path.resolve(dir);
+  if (!resolved.startsWith(MEDIA_ROOT)) throw new Error("Invalid actress folder.");
+  await mkdir(resolved, { recursive: true });
+  return resolved;
+}
+
+async function findActressImage(name) {
+  const dir = await individualActressFolder(name);
+  return dir ? findFirst(IMAGE_EXTS.map((ext) => path.join(dir, `folder${ext}`))) : "";
+}
+
 async function findArtwork(dir, id, kind) {
   const names = [];
   for (const ext of IMAGE_EXTS) {
@@ -467,23 +526,35 @@ function galleryArtSelections() {
   return selections;
 }
 
-async function scanImageGalleries() {
+async function scanImageGalleries(progressStart = 1, progressEnd = 38) {
   log("info", "Scanning image galleries");
   const includeNested = Boolean(preferences.includeNestedGalleryFolders);
   const images = [];
   const galleries = [];
   const actressMap = new Map();
-  const actressDirs = new Map();
   const actressImages = new Map();
   const artSelections = galleryArtSelections();
   const topEntries = await safeReadDir(MEDIA_ROOT);
+  const topDirs = topEntries.filter((entry) => entry.isDirectory());
+  let processedDirs = 0;
+  const advanceGalleryProgress = (message) => {
+    const percent = progressStart + (topDirs.length ? (processedDirs / topDirs.length) * (progressEnd - progressStart) : progressEnd - progressStart);
+    setScanProgress(percent, message);
+  };
   for (const entry of topEntries) {
     if (!entry.isDirectory()) continue;
+    processedDirs += 1;
+    advanceGalleryProgress(`Scanning galleries (${processedDirs}/${topDirs.length})...`);
     const actressName = normalizeName(entry.name);
     const actressDir = path.join(MEDIA_ROOT, entry.name);
-    actressDirs.set(actressName, actressDir);
     const absorbedDirs = [];
-    for (const dir of await walkGalleryDirs(actressDir)) {
+    const galleryDirs = await walkGalleryDirs(actressDir);
+    let processedGalleryDirs = 0;
+    for (const dir of galleryDirs) {
+      processedGalleryDirs += 1;
+      const basePercent = progressStart + (topDirs.length ? ((processedDirs - 1) / topDirs.length) * (progressEnd - progressStart) : 0);
+      const dirSlice = topDirs.length ? (progressEnd - progressStart) / topDirs.length : progressEnd - progressStart;
+      setScanProgress(basePercent + (galleryDirs.length ? (processedGalleryDirs / galleryDirs.length) * dirSlice : dirSlice), `Scanning galleries (${processedDirs}/${topDirs.length}, ${processedGalleryDirs}/${galleryDirs.length})...`);
       if (includeNested && absorbedDirs.some((parent) => isWithinDir(parent, dir))) continue;
       const entries = await safeReadDir(dir);
       const files = entries.filter((item) => item.isFile());
@@ -504,7 +575,15 @@ async function scanImageGalleries() {
         const title = normalizeName(path.basename(file.name, path.extname(file.name)));
         titleCounts.set(title, (titleCounts.get(title) || 0) + 1);
       }
+      let processedImages = 0;
       for (const { dir: imageDir, file } of imageFiles) {
+        processedImages += 1;
+        if (processedImages % 20 === 0 || processedImages === imageFiles.length) {
+          const imagePercent = basePercent + (galleryDirs.length
+            ? (((processedGalleryDirs - 1) + (processedImages / imageFiles.length)) / galleryDirs.length) * dirSlice
+            : dirSlice);
+          setScanProgress(imagePercent, `Reading gallery images (${processedImages}/${imageFiles.length})...`);
+        }
         const filePath = path.join(imageDir, file.name);
         const imageStat = await stat(filePath);
         const dimensions = await imageDimensions(filePath);
@@ -555,7 +634,7 @@ async function scanImageGalleries() {
       };
       galleries.push(gallery);
       if (!actressMap.has(actressName)) {
-        const actressImage = await findFirst(IMAGE_EXTS.map((ext) => path.join(actressDir, `folder${ext}`)));
+        const actressImage = await findActressImage(actressName);
         actressMap.set(actressName, { name: actressName, galleries: [], galleryCount: 0, imageCount: 0, fileSize: 0, fileSizeLabel: "", imageUrl: mediaUrl(actressImage) });
       }
       const actress = actressMap.get(actressName);
@@ -568,7 +647,8 @@ async function scanImageGalleries() {
   for (const actress of actressMap.values()) {
     actress.fileSizeLabel = fileSizeLabel(actress.fileSize);
     if (actress.imageUrl) continue;
-    const dir = actressDirs.get(actress.name);
+    const dir = await individualActressFolder(actress.name, { create: true });
+    if (!dir) continue;
     const portraits = (actressImages.get(actress.name) || [])
       .filter((image) => Number(image.height || 0) > Number(image.width || 0))
       .sort((a, b) => hashRank(a.key).localeCompare(hashRank(b.key)));
@@ -622,15 +702,14 @@ async function scanLibrary() {
   setScanProgress(1, "Scanning image galleries...");
   const movies = [];
   const legacyKeyMap = new Map();
-  const actressFolderMap = new Map();
-  const imageLibrary = await scanImageGalleries();
-  setScanProgress(12, "Finding videos...");
+  const imageLibrary = await scanImageGalleries(1, 38);
+  setScanProgress(39, "Finding videos...");
   const videoPaths = await walk(MEDIA_ROOT);
   log("info", `Found ${videoPaths.length} videos`);
   let scannedVideos = 0;
   for (const videoPath of videoPaths) {
     scannedVideos += 1;
-    setScanProgress(12 + (videoPaths.length ? (scannedVideos / videoPaths.length) * 62 : 62), `Scanning videos (${scannedVideos}/${videoPaths.length})...`);
+    setScanProgress(40 + (videoPaths.length ? (scannedVideos / videoPaths.length) * 36 : 36), `Scanning videos (${scannedVideos}/${videoPaths.length})...`);
     const dir = path.dirname(videoPath);
     const fileId = movieIdFromFile(videoPath);
     const inferred = inferFromFolder(videoPath);
@@ -651,13 +730,9 @@ async function scanLibrary() {
     const generatedCover = !cover ? await findOrCreateGeneratedCover(generatedCoverKey, videoPath) : "";
     const displayCover = cover || generatedCover;
     const generatedScreenshot = Boolean(generatedCover);
-    const actresses = nfo.actresses?.length ? unique(nfo.actresses) : canonicalizeActresses(inferred.actresses, inferred.actresses);
+    const hasNfoActresses = Boolean(nfo.actresses?.length);
+    const actresses = hasNfoActresses ? unique(nfo.actresses) : canonicalizeActresses(inferred.actresses, inferred.actresses);
     const gallery = galleryForVideoPath(videoPath, imageLibrary.imageGalleries, Boolean(preferences.includeNestedGalleryFolders));
-    const relParts = path.relative(MEDIA_ROOT, videoPath).split(path.sep);
-    const topFolder = relParts.length >= 2 ? path.join(MEDIA_ROOT, relParts[0]) : "";
-    for (const actress of inferred.actresses) {
-      if (topFolder && !actressFolderMap.has(actress)) actressFolderMap.set(actress, topFolder);
-    }
     movies.push({
       key: baseKey,
       baseKey,
@@ -666,6 +741,7 @@ async function scanLibrary() {
       title: nfo.title || inferred.title || id,
       studio: nfo.studio || inferred.studio || "",
       actresses,
+      actressSource: hasNfoActresses ? "nfo" : "folder",
       releaseDate: normalizeName(nfo.releaseDate || ""),
       hasNfo: Boolean(nfo.hasNfo),
       videoPath,
@@ -730,7 +806,8 @@ async function scanLibrary() {
   const studioMap = new Map();
   for (const movie of movies) {
     for (const actress of movie.actresses) {
-      if (!actressMap.has(actress)) actressMap.set(actress, { name: actress, movies: [], image: "" });
+      if (!actressMap.has(actress)) actressMap.set(actress, { name: actress, movies: [], image: "", nameSource: movie.actressSource || "movie" });
+      else if (movie.actressSource === "nfo") actressMap.get(actress).nameSource = "nfo";
       actressMap.get(actress).movies.push(movie.key);
     }
     const studio = movie.studio || "Unknown studio";
@@ -739,41 +816,49 @@ async function scanLibrary() {
   }
 
   for (const imageActress of imageLibrary.imageActresses) {
-    if (!actressMap.has(imageActress.name)) actressMap.set(imageActress.name, { name: imageActress.name, movies: [], image: "", imageUrl: imageActress.imageUrl || "" });
+    const equivalentName = findEquivalentName(imageActress.name, actressMap.values());
+    if (equivalentName) {
+      const actress = actressMap.get(equivalentName);
+      actress.imageUrl ||= imageActress.imageUrl || "";
+    } else {
+      actressMap.set(imageActress.name, { name: imageActress.name, movies: [], image: "", imageUrl: imageActress.imageUrl || "", nameSource: "image" });
+    }
   }
 
-  const actresses = [...actressMap.values()];
-  const imageActressMap = new Map(imageLibrary.imageActresses.map((actress) => [actress.name, actress]));
+  const actresses = mergeActressEntries([...actressMap.values()]);
   let scannedPeople = 0;
   for (const actress of actresses) {
     scannedPeople += 1;
     setScanProgress(82 + (actresses.length ? (scannedPeople / actresses.length) * 8 : 8), `Finding actress images (${scannedPeople}/${actresses.length})...`);
-    const folderMatches = [...actressFolderMap.entries()]
-      .filter(([folderActress]) => namesEquivalent(actress.name, folderActress))
-      .map(([, dir]) => dir);
-    const candidateDirs = [
-      ...folderMatches,
-      ...movies
-      .filter((movie) => movie.actresses.some((name) => namesEquivalent(name, actress.name)))
-      .map((movie) => {
-        const relParts = path.relative(MEDIA_ROOT, movie.videoPath).split(path.sep);
-        return relParts.length >= 2 ? path.join(MEDIA_ROOT, relParts[0]) : "";
-      })
-      .filter(Boolean)
-    ];
-    for (const dir of unique(candidateDirs)) {
-      actress.image = await findFirst(IMAGE_EXTS.map((ext) => path.join(dir, `folder${ext}`)));
-      if (actress.image) break;
-    }
-    actress.imageUrl = mediaUrl(actress.image) || actress.imageUrl || "";
+    const actressDir = await individualActressFolder(actress.name, { create: true });
+    actress.image = actressDir ? await findFirst(IMAGE_EXTS.map((ext) => path.join(actressDir, `folder${ext}`))) : "";
     actress.movieCount = actress.movies.length;
-    const imageActress = imageActressMap.get(actress.name) || {};
-    actress.galleryCount = Number(imageActress.galleryCount || 0);
-    actress.imageCount = Number(imageActress.imageCount || 0);
-    actress.galleryFileSize = Number(imageActress.fileSize || 0);
-    actress.galleryFileSizeLabel = imageActress.fileSizeLabel || fileSizeLabel(0);
+    const matchingImageActresses = imageLibrary.imageActresses.filter((item) => namesEquivalent(item.name, actress.name));
+    actress.galleryCount = matchingImageActresses.reduce((sum, item) => sum + Number(item.galleryCount || 0), 0);
+    actress.imageCount = matchingImageActresses.reduce((sum, item) => sum + Number(item.imageCount || 0), 0);
+    actress.galleryFileSize = matchingImageActresses.reduce((sum, item) => sum + Number(item.fileSize || 0), 0);
+    actress.galleryFileSizeLabel = fileSizeLabel(actress.galleryFileSize);
     actress.totalFileSize = actress.movies.reduce((sum, key) => sum + Number(movies.find((movie) => movie.key === key)?.fileSize || 0), 0) + actress.galleryFileSize;
     actress.totalFileSizeLabel = fileSizeLabel(actress.totalFileSize);
+    if (!actress.image && actressDir) {
+      const galleryKeys = new Set(matchingImageActresses.flatMap((item) => item.galleries || []));
+      const portrait = imageLibrary.images
+        .filter((image) => galleryKeys.has(image.galleryKey) && Number(image.height || 0) > Number(image.width || 0))
+        .sort((a, b) => hashRank(a.key).localeCompare(hashRank(b.key)))[0];
+      if (portrait) {
+        try {
+          await removeFolderImages(actressDir);
+          actress.image = path.join(actressDir, "folder.jpg");
+          await writeJpegFromImage(portrait.filePath, actress.image);
+        } catch {
+          actress.image = "";
+        }
+      }
+    }
+    actress.imageUrl = mediaUrl(actress.image) || "";
+  }
+  for (const movie of movies) {
+    movie.actresses = unique(movie.actresses.map((name) => findEquivalentName(name, actresses) || name));
   }
 
   setScanProgress(92, "Finding studio images...");
@@ -794,7 +879,7 @@ async function scanLibrary() {
     imageActresses: imageLibrary.imageActresses,
     totals: {
       movies: movies.length,
-      actresses: actressMap.size,
+      actresses: actresses.length,
       studios: studioMap.size,
       otherVideos: 0,
       images: imageLibrary.images.length,
@@ -812,8 +897,8 @@ async function scanLibrary() {
 function publicLibrary() {
   return {
     ...library,
-    movies: library.movies.map(({ videoPath, poster, cover, legacyKey, baseKey, ...movie }) => ({ ...movie, filePath: videoPath })),
-    actresses: library.actresses.map(({ image, ...actress }) => actress),
+    movies: library.movies.map(({ videoPath, poster, cover, legacyKey, baseKey, actressSource, ...movie }) => ({ ...movie, filePath: videoPath })),
+    actresses: library.actresses.map(({ image, nameSource, ...actress }) => actress),
     studios: library.studios.map(({ image, ...studio }) => studio),
     images: library.images.map(({ filePath, ...image }) => image),
     imageGalleries: library.imageGalleries.map(({ dir, ...gallery }) => gallery),
@@ -1222,7 +1307,7 @@ function loadScanResults() {
     fileSizeLabel: row.file_size_label || fileSizeLabel(row.file_size || 0)
   }));
   const imageActressMap = new Map(imageActresses.map((actress) => [actress.name, actress]));
-  const actresses = db.prepare("SELECT * FROM actresses").all().map((row) => {
+  let actresses = db.prepare("SELECT * FROM actresses").all().map((row) => {
     const movieKeys = parseJsonArray(row.movies_json);
     const imageActress = imageActressMap.get(row.name) || {};
     const galleryFileSize = Number(imageActress.fileSize || 0);
@@ -1257,6 +1342,21 @@ function loadScanResults() {
         totalFileSizeLabel: imageActress.fileSizeLabel || fileSizeLabel(0)
       });
     }
+  }
+  actresses = mergeActressEntries(actresses);
+  for (const movie of movies) {
+    movie.actresses = unique(movie.actresses.map((name) => findEquivalentName(name, actresses) || name));
+  }
+  for (const actress of actresses) {
+    const matchingImageActresses = imageActresses.filter((item) => namesEquivalent(item.name, actress.name));
+    const galleryFileSize = matchingImageActresses.reduce((sum, item) => sum + Number(item.fileSize || 0), 0);
+    actress.movieCount = actress.movies.length;
+    actress.galleryCount = matchingImageActresses.reduce((sum, item) => sum + Number(item.galleryCount || 0), 0);
+    actress.imageCount = matchingImageActresses.reduce((sum, item) => sum + Number(item.imageCount || 0), 0);
+    actress.galleryFileSize = galleryFileSize;
+    actress.galleryFileSizeLabel = fileSizeLabel(galleryFileSize);
+    actress.totalFileSize = actress.movies.reduce((sum, key) => sum + Number(movieByKey.get(key)?.fileSize || 0), 0) + galleryFileSize;
+    actress.totalFileSizeLabel = fileSizeLabel(actress.totalFileSize);
   }
   for (const imageActress of imageActresses) {
     imageActress.imageUrl = actresses.find((actress) => namesEquivalent(actress.name, imageActress.name))?.imageUrl || "";
@@ -1606,10 +1706,8 @@ async function handle(req, res) {
       const actress = library.actresses.find((item) => item.name === name);
       if (!actress) return sendJson(res, { error: "Actress not found" }, 404);
       const upload = parseMultipartImage(req, await readRequestBody(req));
-      const movies = moviesByActress(name);
-      const candidate = movies.find((movie) => movie.videoPath);
-      if (!candidate) return sendJson(res, { error: "Actress folder not found" }, 404);
-      const folder = path.join(MEDIA_ROOT, path.relative(MEDIA_ROOT, candidate.videoPath).split(path.sep)[0]);
+      const folder = await individualActressFolder(name, { create: true });
+      if (!folder) return sendJson(res, { error: "Actress folder not found" }, 404);
       await removeFolderImages(folder);
       const filePath = path.join(folder, "folder.jpg");
       await writeFile(filePath, upload.bytes);
@@ -1681,18 +1779,18 @@ async function handle(req, res) {
       const image = library.images.find((item) => item.key === key);
       if (!image) return sendJson(res, { error: "Image not found" }, 404);
       if (image.height && image.width && image.height <= image.width) return sendJson(res, { error: "Only portrait images can be used as actress images." }, 400);
-      const relParts = path.relative(MEDIA_ROOT, image.filePath).split(path.sep);
-      const folder = path.join(MEDIA_ROOT, relParts[0] || "");
-      if (!folder.startsWith(MEDIA_ROOT)) return sendJson(res, { error: "Actress folder not found" }, 404);
+      const targetName = library.actresses.find((item) => namesEquivalent(item.name, image.actressName))?.name || image.actressName;
+      const folder = await individualActressFolder(targetName, { create: true });
+      if (!folder) return sendJson(res, { error: "Actress folder not found" }, 404);
       await removeFolderImages(folder);
       const filePath = path.join(folder, "folder.jpg");
       await writeJpegFromImage(image.filePath, filePath);
-      const actress = library.actresses.find((item) => item.name === image.actressName);
+      const actress = library.actresses.find((item) => namesEquivalent(item.name, targetName));
       if (actress) {
         actress.image = filePath;
         actress.imageUrl = mediaUrl(filePath);
       }
-      const imageActress = library.imageActresses.find((item) => item.name === image.actressName);
+      const imageActress = library.imageActresses.find((item) => namesEquivalent(item.name, targetName));
       if (imageActress) imageActress.imageUrl = mediaUrl(filePath);
       library.scannedAt = new Date().toISOString();
       return sendJson(res, publicLibrary());
@@ -1712,7 +1810,21 @@ async function handle(req, res) {
       const cover = body.kind === "cover" ? imageKey : current.cover_image_key || "";
       const poster = body.kind === "poster" ? imageKey : current.poster_image_key || "";
       db.prepare("INSERT OR REPLACE INTO gallery_art (gallery_key, cover_image_key, poster_image_key) VALUES (?, ?, ?)").run(key, cover, poster);
-      await scanLibrary();
+      const image = library.images.find((item) => item.key === imageKey);
+      if (body.kind === "cover") {
+        gallery.coverImageKey = imageKey;
+        gallery.coverUrl = image?.imageUrl || gallery.coverUrl || "";
+      }
+      if (body.kind === "poster") {
+        gallery.posterImageKey = imageKey;
+        gallery.posterUrl = image?.imageUrl || gallery.posterUrl || "";
+      }
+      db.prepare(`
+        UPDATE image_galleries
+        SET cover_image_key = ?, poster_image_key = ?, cover_url = ?, poster_url = ?
+        WHERE key = ?
+      `).run(gallery.coverImageKey || "", gallery.posterImageKey || "", gallery.coverUrl || "", gallery.posterUrl || "", key);
+      library.scannedAt = new Date().toISOString();
       return sendJson(res, publicLibrary());
     } catch (error) {
       return sendJson(res, { error: error.message }, 400);

@@ -2,6 +2,24 @@
 
 All notable changes to javbrowser are tracked here.
 
+## 0.3.0 - 2026-05-22
+
+- Consolidated the separate Covers and Posters navigation into one **Movies** view with cover/poster layout controls.
+- Moved **View Covers** and **View Posters** beside **Options** in the main toolbar.
+- Added a search popup for movies, actresses, studios, galleries, and images.
+- Added **View All** mode in Images for browsing all gallery images with lazy loading and orientation filters.
+- Added lightbox and image-card menus for gallery navigation, gallery art choices, actress image copying, actress navigation, and playlist actions.
+- Added actress sorting by number of galleries, number of images, and total file size.
+- Changed image actress sorting from **Number of photos** to **Number of images**.
+- Updated sort labels to sentence case.
+- Updated numbered shortcuts for the new Movies navigation and changed full-screen artwork shortcuts to `h` and `j`.
+- Restored `w` as the image-wall shortcut and added actress-detail shortcuts for Movies (`m`) and Galleries (`g`).
+- Adjusted the minimum poster lightbox zoom to two-thirds of the viewport-fitting poster height.
+- Improved gallery and image row sizing, including single-gallery poster sizing.
+- Improved scan progress during gallery and image scanning.
+- Added separate saved states for image wall, hide missing images, and View All orientation filters.
+- Updated README with the new screenshot, search feature, current shortcuts, and a simpler feature overview.
+
 ## 0.2.0 - 2026-05-21
 
 - Added the **Images** section for browsing actress image galleries.
