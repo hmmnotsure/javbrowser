@@ -311,7 +311,11 @@ function restoreLocalUiState() {
 function restoreViewSnapshot(snapshot) {
   const scrollY = Number(snapshot?.scrollY || 0);
   const { scrollY: _scrollY, ...viewState } = snapshot;
+  const imageOrientationFilters = { ...state.imageOrientationFilters };
+  const allImageOrientationFilters = { ...state.allImageOrientationFilters };
   Object.assign(state, viewState);
+  state.imageOrientationFilters = imageOrientationFilters;
+  state.allImageOrientationFilters = allImageOrientationFilters;
   normalizeViewState();
   applyListingToggleState();
   render();
@@ -768,6 +772,15 @@ function personFavoriteMovieTotal(person) {
   return moviesByKeys(person.movies || []).reduce((sum, movie) => sum + Number(movieFavorite(movie.key)), 0);
 }
 
+function personFavoriteTotal(person, type) {
+  if (type !== "actress") return personFavoriteMovieTotal(person);
+  const imageActress = imageActressForName(person.name);
+  const galleries = galleriesByKeys(imageActress?.galleries || []);
+  const favoriteGalleries = galleries.reduce((sum, gallery) => sum + Number(galleryFavorite(gallery.key)), 0);
+  const favoriteImages = galleries.reduce((sum, gallery) => sum + galleryFavoriteImageTotal(gallery), 0);
+  return personFavoriteMovieTotal(person) + favoriteGalleries + favoriteImages;
+}
+
 function newestReleaseForPerson(person) {
   return moviesByKeys(person.movies || []).reduce((newest, movie) => {
     const release = String(movie.releaseDate || "");
@@ -776,10 +789,11 @@ function newestReleaseForPerson(person) {
 }
 
 function sortedPeople(items) {
-  const sort = state.view === "studios" ? state.studioSort : state.peopleSort;
+  const type = state.view === "studios" ? "studio" : "actress";
+  const sort = type === "studio" ? state.studioSort : state.peopleSort;
   const sorted = sort === "random" ? byRandomRank(items, "people", (item) => item.name) : [...items].sort((a, b) => {
     if (sort === "counter") return personCounterTotal(b) - personCounterTotal(a) || collator.compare(a.name, b.name);
-    if (sort === "favorites") return personFavoriteMovieTotal(b) - personFavoriteMovieTotal(a) || collator.compare(a.name, b.name);
+    if (sort === "favorites") return personFavoriteTotal(b, type) - personFavoriteTotal(a, type) || collator.compare(a.name, b.name);
     if (sort === "fileSize") return personTotalFileSize(b) - personTotalFileSize(a) || collator.compare(a.name, b.name);
     if (sort === "galleryCount") return personGalleryStats(b).galleryCount - personGalleryStats(a).galleryCount || collator.compare(a.name, b.name);
     if (sort === "imageCount") return personGalleryStats(b).imageCount - personGalleryStats(a).imageCount || collator.compare(a.name, b.name);
@@ -1226,7 +1240,9 @@ function isPeopleView() {
 }
 
 function isMainMovieView() {
-  return state.view === "movies" || state.view === "galleryMovies";
+  return state.view === "movies"
+    || state.view === "galleryMovies"
+    || state.view === "actress";
 }
 
 function currentSortValue() {
@@ -1633,7 +1649,7 @@ function personCard(type) {
           </p>
         ` : `<p>${person.movieCount} movie${person.movieCount === 1 ? "" : "s"}</p>`}
         <div class="card-tools person-card-tools">
-          <span class="counter-value favorite-count" title="Favorite movies">${personFavoriteMovieTotal(person)}</span>
+          <span class="counter-value favorite-count" title="${type === "actress" ? "Favorite movies, galleries, and images" : "Favorite movies"}">${personFavoriteTotal(person, type)}</span>
           <button class="favorite-button ${personFavorite(type, person.name) ? "active" : ""}" data-action="favorite-${type}" data-name="${escapeAttr(person.name)}" title="Favorite">${personFavorite(type, person.name) ? "♥" : "♡"}</button>
           <span class="counter-value counter-count" title="Counter total">${personCounterTotal(person)}</span>
         </div>
@@ -1822,6 +1838,7 @@ function renderImageGallery(key) {
   }
   const images = sortedImages(imagesByKeys(gallery.images || []));
   const visible = visibleGalleryImages(images);
+  const orientationFilters = currentImageOrientationFilters();
   state.currentRenderedMovieKeys = [];
   state.currentRenderedImageKeys = visible.map((image) => image.key);
   state.currentRenderedTitle = gallery.title;
@@ -1832,8 +1849,8 @@ function renderImageGallery(key) {
         <p>${visible.length} photo${visible.length === 1 ? "" : "s"} - ${escapeHtml(gallery.fileSizeLabel)}</p>
       </div>
       <div class="segmented">
-        <button class="${state.imageOrientationFilters.landscape ? "active" : ""}" data-action="image-orientation" data-orientation="landscape">Landscape</button>
-        <button class="${state.imageOrientationFilters.portrait ? "active" : ""}" data-action="image-orientation" data-orientation="portrait">Portrait</button>
+        <button class="${orientationFilters.landscape ? "active" : ""}" data-action="image-orientation" data-orientation="landscape">Landscape</button>
+        <button class="${orientationFilters.portrait ? "active" : ""}" data-action="image-orientation" data-orientation="portrait">Portrait</button>
         ${(gallery.movieKeys || []).length ? `<button data-action="gallery-movies" data-key="${escapeAttr(gallery.key)}">View Movies</button>` : ""}
       </div>
     </div>
@@ -1916,9 +1933,17 @@ function renderActress(name) {
     state.view = "actresses";
     return render();
   }
+  const hasMovies = Boolean((person.movies || []).length);
   const hasGalleries = Boolean(imageActressForName(name)?.galleryCount);
   if (state.currentActressSection === "images" && !hasGalleries) {
     state.currentActressSection = "movies";
+  }
+  if (state.currentActressSection === "movies" && !hasMovies && hasGalleries) {
+    state.currentActressSection = "images";
+  }
+  if (!hasMovies && !hasGalleries) {
+    state.view = "actresses";
+    return render();
   }
   if (state.currentActressSection === "images") {
     const galleries = galleriesForActressName(name);
@@ -1933,8 +1958,8 @@ function renderActress(name) {
           <p>${galleries.length} galler${galleries.length === 1 ? "y" : "ies"}</p>
         </div>
         <div class="segmented center-segment">
-          <button data-action="actress-section" data-section="movies">Movies</button>
-          <button class="active" data-action="actress-section" data-section="images">Galleries</button>
+          ${hasMovies ? `<button data-action="actress-section" data-section="movies">Movies</button>` : ""}
+          ${hasGalleries ? `<button class="active" data-action="actress-section" data-section="images">Galleries</button>` : ""}
         </div>
         <div class="segmented">
           <button class="${state.imageMode === "covers" ? "active" : ""}" data-action="image-mode" data-mode="covers">Covers</button>
@@ -1964,7 +1989,7 @@ function renderActress(name) {
         <p>${movies.length} movie${movies.length === 1 ? "" : "s"}</p>
       </div>
       <div class="segmented center-segment">
-        <button class="active" data-action="actress-section" data-section="movies">Movies</button>
+        ${hasMovies ? `<button class="active" data-action="actress-section" data-section="movies">Movies</button>` : ""}
         ${hasGalleries ? `<button data-action="actress-section" data-section="images">Galleries</button>` : ""}
       </div>
       <div class="segmented">
@@ -2146,11 +2171,17 @@ function lightboxMoreActionsHtml(item, movie, imageItem, gallery, orientation) {
     return actions.join("");
   }
   if (!movie) return "";
-  const actressName = movie.actresses?.[0] || "";
+  const actresses = movie.actresses || [];
   const actions = [
     `<button data-action="lightbox-add-playlist" data-key="${escapeAttr(movie.key)}">Add to Playlist</button>`
   ];
-  if (actressName) actions.push(`<button data-action="actress" data-name="${escapeAttr(actressName)}">View ${escapeHtml(actressName)}</button>`);
+  if (actresses.length === 1) {
+    actions.push(`<button data-action="actress" data-name="${escapeAttr(actresses[0])}">View Actress</button>`);
+  } else {
+    for (const actressName of actresses) {
+      actions.push(`<button data-action="actress" data-name="${escapeAttr(actressName)}">View ${escapeHtml(actressName)}</button>`);
+    }
+  }
   return actions.join("");
 }
 
@@ -2787,6 +2818,10 @@ function toggleImagesViewAll() {
 
 function setActressSection(section) {
   if (state.view !== "actress") return false;
+  if (section === "movies") {
+    const person = state.library.actresses.find((item) => item.name === state.currentActress);
+    if (!person?.movies?.length) return false;
+  }
   if (section === "images") {
     const actress = imageActressForName(state.currentActress);
     if (!actress?.galleries?.length) return false;
@@ -2810,6 +2845,10 @@ function cycleTheme() {
 
 function toggleScrollTopButton() {
   window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function openShortcuts() {
+  document.querySelector("#shortcutsModal").hidden = false;
 }
 
 function adjustListingSize(delta) {
@@ -2895,6 +2934,14 @@ function selectAllVisible() {
 
 function closeActiveOverlayOrMenu() {
   if (closeSearch()) return true;
+  if (!document.querySelector("#shortcutsModal").hidden) {
+    document.querySelector("#shortcutsModal").hidden = true;
+    return true;
+  }
+  if (!document.querySelector("#settings").hidden) {
+    document.querySelector("#settings").hidden = true;
+    return true;
+  }
   if (!document.querySelector("#lightbox").hidden) {
     document.querySelector("#lightbox").hidden = true;
     stopSlideshow(false);
@@ -3003,6 +3050,7 @@ function handleGlobalShortcut(event) {
   else if (key === "2") goTo({ view: "actresses" });
   else if (key === "3") goTo({ view: "studios" });
   else if (key === "4") goTo({ view: "images" });
+  else if (key === "9") openShortcuts();
   else if (key === "c") setListingMode("covers");
   else if (key === "/" || key === "k" && (event.metaKey || event.ctrlKey)) openSearch();
   else if (key === "l" && (state.view === "imageGallery" || (state.view === "images" && state.imagesViewAll))) toggleImageOrientation("landscape");
@@ -3163,6 +3211,12 @@ settingsBtn.addEventListener("click", () => {
   document.querySelector("#settings").hidden = false;
   renderNavSettings();
 });
+document.querySelector("#settings").addEventListener("click", (event) => {
+  if (event.target.id === "settings") document.querySelector("#settings").hidden = true;
+});
+document.querySelector("#shortcutsModal").addEventListener("click", (event) => {
+  if (event.target.id === "shortcutsModal") document.querySelector("#shortcutsModal").hidden = true;
+});
 document.querySelector("#viewPosters").addEventListener("click", () => {
   toggleViewPosters();
 });
@@ -3279,7 +3333,7 @@ document.body.addEventListener("click", (event) => {
     document.querySelector("#detail").hidden = true;
     document.querySelector("#lightbox").hidden = true;
     stopSlideshow(false);
-    goTo({ view: "actress", currentActress: target.dataset.name, currentActressSection: "images" });
+    goTo({ view: "actress", currentActress: target.dataset.name, currentActressSection: "movies" });
     window.scrollTo({ top: 0 });
   }
   if (action === "studio") {
@@ -3312,6 +3366,9 @@ document.body.addEventListener("click", (event) => {
   if (action === "favorites-only") {
     toggleFavoritesFilter();
   }
+  if (action === "view-shortcuts") {
+    openShortcuts();
+  }
   if (action === "posters-for-actress" || action === "covers-for-actress") {
     const person = state.library.actresses.find((item) => item.name === target.dataset.name);
     openLightbox(lightboxItems(sortedMovies(moviesByKeys(person?.movies || [])), action === "covers-for-actress" ? "covers" : "posters"));
@@ -3325,7 +3382,7 @@ document.body.addEventListener("click", (event) => {
     openLightbox(movieImageItems(movie), target.dataset.kind === "cover" ? 1 : 0);
   }
   if (action === "image-actress") {
-    goTo({ view: "actress", currentActress: target.dataset.name, currentActressSection: "images" });
+    goTo({ view: "actress", currentActress: target.dataset.name, currentActressSection: "movies" });
   }
   if (action === "image-gallery") {
     document.querySelector("#detail").hidden = true;

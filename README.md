@@ -7,7 +7,7 @@ It is also a smaller alternative to [stashapp/stash](https://github.com/stashapp
 I made it because I wanted a simpler browser that displayed my covers better and could make playlists without turning the whole thing into a larger media-server project.
 
 <a href="https://ko-fi.com/yeahnoforsure_" target="_blank" rel="noopener noreferrer">
-  <img src="docs/support-me-on-kofi.png" alt="Support me on Ko-fi" width="360">
+  <img src="docs/support-me-on-kofi.png" alt="Support me on Ko-fi" width="240">
 </a>
 
 ![javbrowser screenshot](docs/javbrowser.jpg)
@@ -314,6 +314,7 @@ General:
 - `r` randomizes or re-randomizes the current listing.
 - `s` cycles to the next sort option.
 - `0` cycles themes.
+- `9` opens the shortcuts reference.
 - `t` jumps back to top.
 - `w` toggles image wall mode.
 - `m` toggles Hide Missing Images.

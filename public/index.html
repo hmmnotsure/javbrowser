@@ -194,6 +194,7 @@
       <div class="modal-panel settings-panel">
         <button class="icon close" data-close="settings">x</button>
         <h2>Settings</h2>
+        <button data-action="view-shortcuts">View Shortcuts</button>
         <h3>Gallery Scanning</h3>
         <label class="settings-toggle">
           <input type="checkbox" id="nestedGalleryToggle" data-action="nested-gallery-toggle">
@@ -204,6 +205,64 @@
         </label>
         <h3>Navigation</h3>
         <div id="navSettings" class="settings-list"></div>
+      </div>
+    </div>
+
+    <div id="shortcutsModal" class="modal" hidden>
+      <div class="modal-panel shortcuts-panel">
+        <button class="icon close" data-close="shortcutsModal">x</button>
+        <h2>Keyboard Shortcuts</h2>
+        <div class="shortcuts-grid">
+          <section>
+            <h3>General</h3>
+            <p><kbd>1</kbd><span>Movies</span></p>
+            <p><kbd>2</kbd><span>Actresses</span></p>
+            <p><kbd>3</kbd><span>Studios</span></p>
+            <p><kbd>4</kbd><span>Images</span></p>
+            <p><kbd>9</kbd><span>View shortcuts</span></p>
+            <p><kbd>/</kbd><span>Search</span></p>
+            <p><kbd>Enter</kbd><span>Play current list or checked items</span></p>
+            <p><kbd>Backspace</kbd><span>Back</span></p>
+            <p><kbd>Escape</kbd><span>Close menus, cards, and lightboxes</span></p>
+          </section>
+          <section>
+            <h3>Listing</h3>
+            <p><kbd>c</kbd><span>Covers</span></p>
+            <p><kbd>p</kbd><span>Posters or portrait filter</span></p>
+            <p><kbd>l</kbd><span>Landscape filter</span></p>
+            <p><kbd>f</kbd><span>Favorites filter</span></p>
+            <p><kbd>r</kbd><span>Randomize</span></p>
+            <p><kbd>s</kbd><span>Next sort</span></p>
+            <p><kbd>w</kbd><span>Image wall</span></p>
+            <p><kbd>m</kbd><span>Hide missing images</span></p>
+            <p><kbd>n</kbd><span>Hide movies without NFO</span></p>
+          </section>
+          <section>
+            <h3>Viewing</h3>
+            <p><kbd>h</kbd><span>View covers</span></p>
+            <p><kbd>j</kbd><span>View posters</span></p>
+            <p><kbd>Shift+Up</kbd><span>Increase size or zoom</span></p>
+            <p><kbd>Shift+Down</kbd><span>Decrease size or zoom</span></p>
+            <p><kbd>t</kbd><span>Back to top</span></p>
+            <p><kbd>0</kbd><span>Cycle theme</span></p>
+          </section>
+          <section>
+            <h3>Selection And Detail</h3>
+            <p><kbd>a</kbd><span>Select visible items</span></p>
+            <p><kbd>x</kbd><span>Clear selections</span></p>
+            <p><kbd>\</kbd><span>Add checked items to playlist</span></p>
+            <p><kbd>+</kbd><span>Increase counter</span></p>
+            <p><kbd>-</kbd><span>Decrease counter</span></p>
+            <p><kbd>g</kbd><span>Galleries on actress pages</span></p>
+          </section>
+          <section>
+            <h3>Lightbox</h3>
+            <p><kbd>s</kbd><span>Toggle slideshow</span></p>
+            <p><kbd>Space</kbd><span>Toggle slideshow</span></p>
+            <p><kbd>l</kbd><span>Lock size</span></p>
+            <p><kbd>f</kbd><span>Favorite current item</span></p>
+          </section>
+        </div>
       </div>
     </div>
 

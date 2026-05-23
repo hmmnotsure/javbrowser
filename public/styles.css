@@ -650,7 +650,8 @@ input[type="number"] {
   bottom: calc(100% + 8px);
   display: grid;
   gap: 6px;
-  min-width: 170px;
+  min-width: 220px;
+  max-width: min(360px, 80vw);
   padding: 8px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -660,6 +661,8 @@ input[type="number"] {
 
 .lightbox-more-menu button {
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .wall-play-button {
@@ -1361,17 +1364,58 @@ input[type="range"] {
   padding: 22px;
 }
 
+.shortcuts-panel {
+  width: min(900px, 100%);
+  padding: 22px;
+}
+
 .settings-panel h2 {
   margin: 0 48px 16px 0;
 }
 
-.settings-panel h3 {
+.settings-panel h3,
+.shortcuts-panel h3 {
   margin: 18px 0 8px;
   color: var(--muted);
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0;
   text-transform: uppercase;
+}
+
+.shortcuts-panel h2 {
+  margin: 0 48px 16px 0;
+}
+
+.shortcuts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 18px 22px;
+}
+
+.shortcuts-grid section {
+  min-width: 0;
+}
+
+.shortcuts-grid p {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  margin: 6px 0;
+}
+
+kbd {
+  display: inline-flex;
+  min-height: 26px;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--ink);
+  font: 12px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 .settings-list {

@@ -2,6 +2,16 @@
 
 All notable changes to javbrowser are tracked here.
 
+## 0.3.1 - 2026-05-22
+
+- Added the Ko-fi support button to the README.
+- Added a shortcuts reference popup in Settings and the `9` shortcut to open it.
+- Hid unavailable actress detail tabs and defaulted actress pages to Movies when movies exist.
+- Combined top-level actress favorite counts across favorited movies, galleries, and gallery images.
+- Improved lightbox action labels, wider lightbox menus, and gallery orientation filter persistence.
+- Restored the Favorites filter button on actress Movies and Galleries views.
+- Updated README shortcuts and release notes for the current UI.
+
 ## 0.3.0 - 2026-05-22
 
 - Consolidated the separate Covers and Posters navigation into one **Movies** view with cover/poster layout controls.
