@@ -2,7 +2,7 @@
 
 javbrowser is a simple local browser and playlist-maker for your JAV library. It pairs well with [javinizer/javinizer-go](https://github.com/javinizer/javinizer-go): let Javinizer organize folders, NFO files, covers, and posters, then use javbrowser as a fast wall browser for looking through the collection and making playlists.
 
-It is also a smaller alternative to [stashapp/stash](https://github.com/stashapp/stash). Stash is much broader and more powerful; javbrowser is intentionally narrower. It scans local folders, displays covers and posters cleanly, groups by actress or studio, tracks favorites and counters, searches the library, and builds playlists from the order you are browsing in.
+It is also a smaller alternative to [stashapp/stash](https://github.com/stashapp/stash). Stash is much broader and more powerful; javbrowser is intentionally narrower. It scans local folders, displays covers and posters cleanly, groups by actress or studio, displays galleries and images, tracks favorites and counters, searches the library, and builds playlists from the order you are browsing in.
 
 I made it because I wanted a simpler browser that displayed my covers better and could make playlists without turning the whole thing into a larger media-server project.
 
